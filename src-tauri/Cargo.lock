@@ -4095,7 +4095,7 @@ dependencies = [
 
 [[package]]
 name = "snagcraft"
-version = "1.5.3"
+version = "1.5.4"
 dependencies = [
  "anyhow",
  "arboard",

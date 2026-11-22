@@ -3,6 +3,26 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.5.4
+- **Multi-monitor capture — issue #1 (Windows/macOS).** Capture → **Choose screen** now lists
+  every connected display in SnagCraft's own chooser (name, resolution, scale factor, which one
+  is primary) and captures the one you pick. **Full screen** composes *all* monitors at their
+  real virtual-desktop positions into one image instead of grabbing only the primary.
+  On Linux nothing changes: the desktop portal picker still owns that flow.
+- **Window capture chooser (Windows/macOS).** Capture → **Window** lists the open windows
+  (app name, title, size) in the same chooser, filtered to things that can actually be grabbed —
+  no more asking the OS for a dialog it does not have there.
+- **Native global hotkeys (Windows/macOS).** `PrintScreen` / `Shift+PrintScreen` are registered
+  through the OS hotkey registry; Settings → Global hotkeys shows a **System** badge and explains
+  the platform's own fallback when a combo is already taken by another app.
+- **Scrolling capture (Windows/macOS).** The same stop rules as the Linux loop (idle 2.5 s, two
+  no-change frames, low-confidence warning, 40 000 px cap), same status events.
+- **One app, documented as one app.** README, CONTRIBUTING and the issue templates describe a
+  single SnagCraft — no edition split.
+
+> Windows installers stay **compile-verified only** — Linux is the tested platform. A report
+> from real Windows hardware is the single most useful issue you can file.
+
 ## v1.5.3
 - **Distinct tool icons.** With the icon-only toolbar, four glyphs were hard to tell apart
   at a glance. Redesigned for clarity at toolbar size:
