@@ -1889,6 +1889,24 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   the Windows column is honestly ⚠️ (compile-verified, never run on real
   hardware). Remaining gate: live verification on rostad's Windows box.
 
+## 2026-11-22 — v1.5.4 published (the polish round's release)
+
+- rostad asked to put today's version on GitHub. Bumped 1.5.3 → 1.5.4 in
+  `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
+  `src-tauri/Cargo.lock` + a CHANGELOG entry; commit 13d1533, annotated tag
+  `v1.5.4` → CI run 45065925330.
+- Local gates before tagging (same as the CI quality job): fmt --check clean,
+  clippy --lib `-D warnings` clean, `cargo test --lib` 104/104, `tsc --noEmit` clean.
+- CI: quality + linux + windows + release all **success**. Release page carries 5
+  assets — full AppImage 83.4 MB, thin AppImage 5.5 MB, .deb 4.6 MB, NSIS .exe
+  2.8 MB, .msi 3.4 MB.
+- Verified externally instead of trusting the publish step: downloaded the published
+  thin AppImage (sha256 fee2269387cc270c…), launch-tested it on pn53 → exit 124
+  (alive after 14 s). Then replaced the CI-generated title/notes with the curated
+  v1.5.4 notes; `v1.5.4` is now the **Latest** release, v1.5.3 moved to the list.
+- Still gated: live Windows/macOS verification on rostad's hardware, his "helt
+  perfekt" verdict, and only after that a NEW Rust port attempt.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |
