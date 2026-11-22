@@ -1298,18 +1298,63 @@ class StepTool implements Tool {
 /* --------------------------------------------------------------- callout */
 
 /** Rounded callout defaults. */
-const CALLOUT_PAD = 16;
 const CALLOUT_RADIUS = 14;
 const CALLOUT_MIN_WIDTH = 140;
 const CALLOUT_MIN_HEIGHT = 72;
 const CALLOUT_DEFAULT = { width: 240, height: 112 };
-const CALLOUT_TAIL_WIDTH = 32;
-const CALLOUT_TAIL_HEIGHT = 26;
+
+/**
+ * The balloon as ONE closed path: rounded body with the pointer tail cut into
+ * the bottom edge and softened with concave fillets where it leaves the body.
+ *
+ * One path (instead of a rect plus a triangle) is what makes a callout read as
+ * a designed shape: no seam across the tail's mouth, no doubled outline, and the
+ * stroke flows around the tail in a single uninterrupted pass.
+ */
+const calloutPath = (
+  width: number,
+  height: number,
+  radius: number,
+  tailCentre: number,
+  tailWidth: number,
+  tailHeight: number,
+): string => {
+  const w = Math.max(1, width);
+  const h = Math.max(1, height);
+  const r = Math.min(radius, Math.min(w, h) / 2);
+  const tw = Math.min(tailWidth, w * 0.5);
+  const th = Math.max(8, tailHeight);
+  const bx = tailCentre - tw / 2;
+  const br = tailCentre + tw / 2;
+  const tipX = tailCentre - tw * 0.22;
+  const tipY = h + th;
+  return [
+    `M ${r} 0`,
+    `H ${w - r}`,
+    `A ${r} ${r} 0 0 1 ${w} ${r}`,
+    `V ${h - r}`,
+    `A ${r} ${r} 0 0 1 ${w - r} ${h}`,
+    `H ${br}`,
+    // Outer edge: a near-straight taper from the bottom edge down to the point,
+    // bowed out just enough to not read as a hinge.
+    `Q ${br - tw * 0.08} ${h + th * 0.4} ${tipX + tw * 0.05} ${tipY - th * 0.07}`,
+    // The point itself, softened a touch so it reads drawn rather than vector-raw.
+    `Q ${tipX} ${tipY} ${tipX - tw * 0.07} ${tipY - th * 0.09}`,
+    // Inner edge: back up to the bottom edge, with a fillet where it lands.
+    `Q ${tipX - tw * 0.3} ${h + th * 0.36} ${bx} ${h}`,
+    `H ${r}`,
+    `A ${r} ${r} 0 0 1 0 ${h - r}`,
+    `V ${r}`,
+    `A ${r} ${r} 0 0 1 ${r} 0`,
+    "Z",
+  ].join(" ");
+};
 
 /**
  * Speech-balloon style callout: rounded body + pointer tail + editable caption,
  * bundled into one Group so it moves, scales, undoes and exports as a unit.
- * Click places a default-sized callout; dragging sizes it.
+ * Click places a default-sized callout; dragging sizes it, and the tail points
+ * back at where the drag started (the thing you are talking about).
  */
 class CalloutTool extends DragTool {
   readonly id: ToolId = "callout";
@@ -1359,7 +1404,9 @@ class CalloutTool extends DragTool {
     const width = small ? CALLOUT_DEFAULT.width : Math.max(box.width, CALLOUT_MIN_WIDTH);
     const height = small ? CALLOUT_DEFAULT.height : Math.max(box.height, CALLOUT_MIN_HEIGHT);
 
-    const { group, text } = this.build(left, top, width, height);
+    // The tail points back at the drag origin — the spot the user picked as the
+    // thing being talked about — kept inside the straight part of the bottom edge.
+    const { group, text } = this.build(left, top, width, height, start);
     this.host.addObject(group);
     group.setCoords();
     this.host.commit();
@@ -1389,7 +1436,8 @@ class CalloutTool extends DragTool {
     top: number,
     width: number,
     height: number,
-  ): { group: fabric.Group; text: fabric.IText } {
+    anchor: Point,
+  ): { group: fabric.Group; text: fabric.Textbox } {
     const ink = this.host.color();
     const style = this.host.textStyle();
     // The callout has its own size control (12..120), independent of captions;
@@ -1399,46 +1447,50 @@ class CalloutTool extends DragTool {
       Math.min(120, Math.round(this.host.calloutFontSize()), Math.round(width / 4)),
     );
 
-    // Tail first so the body's fill hides the seam where they overlap.
-    const tail = new fabric.Triangle({
-      left: CALLOUT_PAD + CALLOUT_TAIL_WIDTH / 2,
-      top: height + CALLOUT_TAIL_HEIGHT / 2 - 2,
-      originX: "center",
-      originY: "center",
-      width: CALLOUT_TAIL_WIDTH,
-      height: CALLOUT_TAIL_HEIGHT,
-      angle: 180,
-      fill: "#ffffff",
-      stroke: ink,
-      strokeWidth: 2,
-      strokeUniform: true,
-      selectable: false,
-      evented: false,
-    });
+    // Everything scales with the balloon: a small bubble gets tight padding and
+    // a modest radius, a big one gets breathing room and a softer corner, and
+    // the outline thickens a touch so it never looks like a hairline at 4K.
+    const shortest = Math.min(width, height);
+    const radius = Math.round(Math.min(24, Math.max(10, shortest * 0.14)));
+    const pad = Math.round(Math.min(30, Math.max(12, fontSize * 0.6)));
+    const tailWidth = Math.round(Math.min(52, Math.max(26, shortest * 0.3)));
+    const tailHeight = Math.round(Math.min(46, Math.max(20, tailWidth * 0.75)));
+    const stroke = Math.min(4, Math.max(2, shortest * 0.022));
 
-    const body = new fabric.Rect({
-      left: 0,
-      top: 0,
+    // Tail centre: back at the drag origin, never in a corner arc.
+    const margin = radius + tailWidth * 0.75;
+    const tailCentre = Math.min(
+      Math.max(anchor.x - left, margin),
+      Math.max(margin, width - margin),
+    );
+
+    const body = new fabric.Path(
+      calloutPath(width, height, radius, tailCentre, tailWidth, tailHeight),
+      {
+        left: 0,
+        top: 0,
+        originX: "left",
+        originY: "top",
+        fill: "#ffffff",
+        stroke: ink,
+        strokeWidth: stroke,
+        strokeUniform: true,
+        strokeLineJoin: "round",
+        selectable: false,
+        evented: false,
+        objectCaching: false,
+      },
+    );
+
+    const textWidth = Math.max(40, width - pad * 2);
+    // A Textbox (not IText) so a longer caption WRAPS inside the balloon instead
+    // of running out of its right edge — IText only ever grows sideways.
+    const text = new fabric.Textbox("Callout", {
+      left: pad,
+      top: pad,
       originX: "left",
       originY: "top",
-      width,
-      height,
-      rx: CALLOUT_RADIUS,
-      ry: CALLOUT_RADIUS,
-      fill: "#ffffff",
-      stroke: ink,
-      strokeWidth: 2,
-      strokeUniform: true,
-      selectable: false,
-      evented: false,
-    });
-
-    const text = new fabric.IText("Callout", {
-      left: CALLOUT_PAD,
-      top: CALLOUT_PAD,
-      originX: "left",
-      originY: "top",
-      width: Math.max(40, width - CALLOUT_PAD * 2),
+      width: textWidth,
       fontFamily: style.fontFamily || FONT_STACK,
       fontSize,
       fontWeight: style.fontWeight,
@@ -1448,11 +1500,25 @@ class CalloutTool extends DragTool {
       borderColor: ink,
       editingBorderColor: ink,
       cursorColor: ink,
+      splitByGrapheme: false,
+      textAlign: "left",
       selectable: false,
       evented: false,
     });
+    // Optically centred in the balloon rather than pinned to the top edge, and
+    // kept centred after edits (the caption is usually shorter than the body).
+    // Child coordinates inside a fabric.Group are NOT balloon-local: the group
+    // shifts everything to its own centre, so the balloon's top edge is
+    // `body.top` and the inset has to be added to that.
+    const centreText = (): void => {
+      const textHeight = text.getScaledHeight();
+      text.set({ top: body.top + Math.max(pad, Math.round((height - textHeight) / 2)) });
+      text.setCoords();
+      group.set({ dirty: true });
+      group.canvas?.requestRenderAll();
+    };
 
-    const group = new fabric.Group([tail, body, text], {
+    const group = new fabric.Group([body, text], {
       subTargetCheck: true,
       interactive: true,
       objectCaching: false,
@@ -1464,6 +1530,8 @@ class CalloutTool extends DragTool {
     });
     group.set({ left, top });
     group.setCoords();
+    text.on("editing:exited", centreText);
+    centreText();
     return { group, text };
   }
 }

@@ -1961,6 +1961,31 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   the aperture (drawn on top at 1:1 instead). Rebuild cost 0.22 ms at 1280×800.
   Vision confirms the shaft is thicker and continuous inside the lens.
 
+## 2026-11-22 (wake 8) — callout redrawn from scratch
+
+- rostad asked for a visual analysis and polish pass on the speech bubble ("pratbubbla").
+- Analysis on the old build: the balloon was a rect PLUS a separate `fabric.Triangle`
+  stacked underneath (body's fill hid the seam only partially, so the outline showed a
+  crossbar across the tail's mouth and two T-junction cusps); radius was a fixed 14,
+  padding a fixed 16, tail a fixed 32×26 no matter the balloon size; the caption was
+  pinned to the top-left; and a long caption ran straight out of the right edge because
+  `fabric.IText` only grows sideways.
+- Rebuilt: `calloutPath()` emits ONE closed path for the whole silhouette (rounded body,
+  tail cut into the bottom edge, softened point, filleted base joins); radius / padding /
+  tail size / stroke weight now scale with the balloon; the tail sits at the drag ORIGIN
+  (clamped clear of the corner arcs) so it points at the thing being described; the caption
+  is a `fabric.Textbox` (wraps inside the balloon) and is optically centred, re-centred on
+  `editing:exited`.
+- Tail geometry was settled in a side-by-side lab (`/tmp/tail-lab.html`, four variants
+  rendered and vision-ranked) — the winner was the tapered wedge with a softened point.
+- Verified in the dev harness: wrapping (long caption → 2 lines inside the bubble), export
+  via `flatten()`, undo/redo restoring three callouts, `enterEditing`/`exitEditing` on the
+  Textbox, and a FÖRE/EFTER render of the same three bubbles. Vision on the finished shape:
+  8/10 "clean enough to ship" (from 4–6/10 with an obvious seam/hook).
+- Note for the next pass: fabric group-local child coordinates are NOT balloon-local — the
+  group re-centres its children, so any "place this inside the body" maths must add
+  `body.top` (this cost one wrong render before it was caught by a pixel probe).
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

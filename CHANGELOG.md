@@ -4,6 +4,12 @@ All notable changes to SnagCraft, newest first. Full release notes for every tag
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
 ## v1.5.5 (unreleased)
+- **Redrawn speech bubble (Callout).** The balloon is now one continuous outline with the
+  tail cut into the bottom edge — no more seam where a separate triangle was stacked under
+  the body. Corner radius, padding, tail size and outline weight scale with the balloon, the
+  caption sits optically centred (and stays centred after you edit it), longer captions wrap
+  inside the bubble instead of running past its edge, and the tail points back at the spot
+  you started dragging from.
 - **Magnifying glass now magnifies what you drew.** A lens used to sample only the
   original screenshot, so arrows, shapes and captions under it were missing from the
   zoom (and from the export). It now magnifies the working composite — everything
