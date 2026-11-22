@@ -98,7 +98,8 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 - A collapsible floating capture widget (the "flärp") — hover to open, drag to park
   anywhere, fixed size. Full / Region / a red **Rec** button; while a take runs the
   widget hides itself so it never lands in the video
-- Global hotkeys via the Wayland GlobalShortcuts portal (KDE)
+- Global hotkeys — the Wayland GlobalShortcuts portal on Linux (KDE), native
+  system hotkeys on Windows/macOS
 - Light / dark themes, and a "save before closing?" guard
 
 ## Shortcuts
@@ -231,7 +232,7 @@ Please **don't** open public issues for vulnerabilities. Use
 | Start at login | ✅ XDG autostart | ⚠️ registry Run key |
 | Screen recording | ✅ ScreenCast portal (needs `ffmpeg`) | ⚠️ ffmpeg `gdigrab` |
 | Scrolling capture | ✅ | 🔜 |
-| Global hotkeys | ✅ GlobalShortcuts portal | 🔜 |
+| Global hotkeys | ✅ GlobalShortcuts portal | ⚠️ native (RegisterHotKey) |
 
 > **Windows is compile-verified only.** The stable line's `.exe` is built by CI from
 > the same code but has not been run on real hardware — **Linux is the focus.**

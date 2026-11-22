@@ -47,10 +47,6 @@ mod stitcher;
 pub use align::{find_offset, Bands};
 pub use stitcher::{ScrollingStitcher, Status};
 
-/// Message for platforms without a capture backend yet.
-#[cfg(not(target_os = "linux"))]
-const NOT_SUPPORTED: &str = "scrolling capture not supported on this platform yet";
-
 /// How often the stitcher looks at the newest frame (~14 fps). The portal runs at
 /// monitor rate, so this is a cheap poll, not a capture rate.
 const POLL_INTERVAL: Duration = Duration::from_millis(70);
@@ -246,15 +242,9 @@ pub async fn scrolling_start(
         );
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        imp::start(app, state, region).await
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (app, state, region);
-        Err(NOT_SUPPORTED.to_string())
-    }
+    // Both platform implementations (`imp`) share this contract: the promise
+    // resolves only once frames can actually flow.
+    imp::start(app, state, region).await
 }
 
 /// Finish the capture: stop everything and return the stitched image.
@@ -343,6 +333,38 @@ fn encode_png(outcome: Outcome) -> Result<(String, u32, u32), String> {
         .map_err(|e| format!("cannot encode the scrolling capture: {e}"))
 }
 
+/// Convert an RGBA grab to tightly packed RGB24 — the stitcher's pixel format.
+///
+/// Only the non-Linux source needs it (the portal frames arrive as RGB24
+/// already); kept cross-platform so the unit test runs everywhere.
+#[allow(dead_code)]
+fn rgba_to_rgb24(img: &image::RgbaImage) -> Vec<u8> {
+    let mut out = Vec::with_capacity(img.width() as usize * img.height() as usize * 3);
+    for px in img.pixels() {
+        out.extend_from_slice(&px.0[..3]);
+    }
+    out
+}
+
+/// Publish one `scrolling-status` event — shared by both platform loops.
+fn emit_status(
+    app: &tauri::AppHandle,
+    stitcher: &ScrollingStitcher,
+    warning: Option<String>,
+    finished: bool,
+) {
+    let _ = app.emit(
+        "scrolling-status",
+        ScrollStatus {
+            frames: stitcher.frames(),
+            height: stitcher.rows(),
+            confidence: stitcher.confidence(),
+            warning,
+            finished,
+        },
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Linux implementation: frame source + stitcher thread
 // ---------------------------------------------------------------------------
@@ -350,14 +372,14 @@ fn encode_png(outcome: Outcome) -> Result<(String, u32, u32), String> {
 #[cfg(target_os = "linux")]
 mod imp {
     use super::{
-        cap, imp_crop::crop, Active, Outcome, Region, ScrollStatus, ScrollingState,
+        cap, emit_status, imp_crop::crop, Active, Outcome, Region, ScrollingState,
         ScrollingStitcher, Status, IDLE_STOP, POLL_INTERVAL,
     };
     use std::sync::atomic::Ordering;
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::Instant;
 
-    use tauri::{Emitter, State};
+    use tauri::State;
 
     /// Linux `scrolling_start`: open the portal cast, then hand the newest-frame
     /// slot to a stitcher thread.
@@ -462,7 +484,7 @@ mod imp {
                         stalled = 0;
                     }
                     warning = None;
-                    emit(&app, &stitcher, warning.clone(), false);
+                    emit_status(&app, &stitcher, warning.clone(), false);
                 }
                 Status::NoChange => {
                     if armed {
@@ -476,14 +498,14 @@ mod imp {
                             break;
                         }
                     }
-                    emit(&app, &stitcher, warning.clone(), false);
+                    emit_status(&app, &stitcher, warning.clone(), false);
                 }
                 Status::LowConfidence => {
                     stalled = 0;
                     warning = Some(
                         "you're scrolling too fast — the last step couldn't be matched".to_string(),
                     );
-                    emit(&app, &stitcher, warning.clone(), false);
+                    emit_status(&app, &stitcher, warning.clone(), false);
                 }
                 Status::Capped => {
                     warning = Some(format!(
@@ -491,14 +513,14 @@ mod imp {
                         cap::MAX_HEIGHT
                     ));
                     finished = true;
-                    emit(&app, &stitcher, warning.clone(), true);
+                    emit_status(&app, &stitcher, warning.clone(), true);
                     break;
                 }
             }
         }
 
         // Also covers a Done/cancel-driven stop, which is not "finished" for the UI.
-        emit(&app, &stitcher, warning, finished);
+        emit_status(&app, &stitcher, warning, finished);
 
         let (pixels, width, height) = stitcher.into_image();
         Outcome {
@@ -506,24 +528,6 @@ mod imp {
             width,
             height,
         }
-    }
-
-    fn emit(
-        app: &tauri::AppHandle,
-        stitcher: &ScrollingStitcher,
-        warning: Option<String>,
-        finished: bool,
-    ) {
-        let _ = app.emit(
-            "scrolling-status",
-            ScrollStatus {
-                frames: stitcher.frames(),
-                height: stitcher.rows(),
-                confidence: stitcher.confidence(),
-                warning,
-                finished,
-            },
-        );
     }
 }
 
@@ -557,6 +561,235 @@ mod imp_crop {
             image::imageops::crop_imm(&source, region.left, region.top, width, height).to_image();
         let (w, h) = cropped.dimensions();
         Some((w, h, cropped.into_raw()))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Windows/macOS implementation: xcap region polling + stitcher thread
+// ---------------------------------------------------------------------------
+
+#[cfg(not(target_os = "linux"))]
+mod imp {
+    use super::{
+        cap, emit_status, rgba_to_rgb24, Active, Outcome, Region, ScrollingState,
+        ScrollingStitcher, Status, IDLE_STOP, MIN_REGION_PX, POLL_INTERVAL,
+    };
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::time::Instant;
+
+    use tauri::State;
+
+    /// The monitor overlapping `region` the most, plus the region clamped to
+    /// that monitor and translated into monitor-relative physical pixels
+    /// (what xcap's `capture_region` expects). A region spanning two monitors
+    /// is honestly clamped to the dominant one — stitching needs a single
+    /// consistent source.
+    fn pick_monitor(region: &Region) -> Result<(u32, Region), String> {
+        let mut best: Option<(i64, u32, Region)> = None;
+        for monitor in
+            xcap::Monitor::all().map_err(|e| format!("cannot enumerate monitors: {e}"))?
+        {
+            let (Ok(mx), Ok(my), Ok(mw), Ok(mh), Ok(id)) = (
+                monitor.x(),
+                monitor.y(),
+                monitor.width(),
+                monitor.height(),
+                monitor.id(),
+            ) else {
+                continue;
+            };
+            let left = (region.left as i64).max(mx as i64);
+            let top = (region.top as i64).max(my as i64);
+            let right = ((region.left + region.width) as i64).min(mx as i64 + mw as i64);
+            let bottom = ((region.top + region.height) as i64).min(my as i64 + mh as i64);
+            let (w, h) = (right - left, bottom - top);
+            if w <= 0 || h <= 0 {
+                continue;
+            }
+            let clipped = Region {
+                left: (left - mx as i64) as u32,
+                top: (top - my as i64) as u32,
+                width: w as u32,
+                height: h as u32,
+            };
+            if best.as_ref().map_or(true, |(area, _, _)| w * h > *area) {
+                best = Some((w * h, id, clipped));
+            }
+        }
+        let (_, id, clipped) =
+            best.ok_or_else(|| "the selected region does not lie on any monitor".to_string())?;
+        if !clipped.is_usable() {
+            return Err(format!(
+                "the region clipped to one monitor is too small (at least {MIN_REGION_PX}x{MIN_REGION_PX} needed)"
+            ));
+        }
+        Ok((id, clipped))
+    }
+
+    fn find_monitor(id: u32) -> Result<xcap::Monitor, String> {
+        xcap::Monitor::all()
+            .map_err(|e| format!("cannot enumerate monitors: {e}"))?
+            .into_iter()
+            .find(|m| m.id().is_ok_and(|mid| mid == id))
+            .ok_or_else(|| format!("monitor {id} is no longer connected"))
+    }
+
+    /// Windows/macOS `scrolling_start`: probe one region grab (fail fast and
+    /// honestly), then hand a capture+stitch thread the same contract the
+    /// Linux portal source has.
+    pub(super) async fn start(
+        app: tauri::AppHandle,
+        state: State<'_, ScrollingState>,
+        region: Region,
+    ) -> Result<(), String> {
+        let (monitor_id, region) = pick_monitor(&region)?;
+
+        // Probe BEFORE claiming the slot — and in its own scope: xcap's Monitor
+        // is not Send and must not live across an await (the race path below).
+        {
+            let monitor = find_monitor(monitor_id)?;
+            monitor
+                .capture_region(region.left, region.top, region.width, region.height)
+                .map_err(|e| format!("cannot capture the selected region: {e}"))?;
+        }
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let out = Arc::new(Mutex::new(None));
+        let (done_tx, done_rx) = mpsc::channel();
+
+        let thread = {
+            let out = out.clone();
+            std::thread::Builder::new()
+                .name("snagcraft-scrolling-stitch".to_string())
+                .spawn(move || {
+                    let outcome = run(app, monitor_id, region, stop.clone());
+                    if let Ok(mut slot) = out.lock() {
+                        *slot = Some(outcome);
+                    }
+                    let _ = done_tx.send(());
+                })
+                .map_err(|e| format!("cannot start the stitcher thread: {e}"))?
+        };
+
+        let active = Active {
+            stop,
+            join: Some(thread),
+            done: done_rx,
+            out,
+            width: region.width,
+        };
+
+        if let Err(rejected) = state.begin(active) {
+            // Lost a race with another start: tear down what we just started.
+            let _ = tauri::async_runtime::spawn_blocking(move || rejected.finish()).await;
+            return Err("a scrolling capture is already in progress".to_string());
+        }
+
+        Ok(())
+    }
+
+    /// The capture loop — a deliberate MIRROR of the Linux `imp::run` stop
+    /// rules (keep the two in sync when editing either): unchanged screen →
+    /// IDLE_STOP timer; changed but no new rows twice in a row → done; low
+    /// confidence → warn; stitcher cap → done. The "screen unchanged" test is
+    /// byte-equality against the previous grab (Linux uses buffer identity on
+    /// the portal's newest-frame slot — same semantics).
+    fn run(
+        app: tauri::AppHandle,
+        monitor_id: u32,
+        region: Region,
+        stop: Arc<AtomicBool>,
+    ) -> Outcome {
+        let mut stitcher = ScrollingStitcher::new(region.width, region.height);
+        let mut last: Option<Vec<u8>> = None;
+        let mut last_progress = Instant::now();
+        let mut armed = false;
+        let mut stalled = 0u32;
+        let mut warning: Option<String> = None;
+        let mut finished = false;
+
+        let monitor = match find_monitor(monitor_id) {
+            Ok(monitor) => monitor,
+            Err(_) => return into_outcome(stitcher),
+        };
+
+        while !stop.load(Ordering::Relaxed) {
+            std::thread::sleep(POLL_INTERVAL);
+
+            let Ok(img) =
+                monitor.capture_region(region.left, region.top, region.width, region.height)
+            else {
+                // Display went away mid-capture — keep what we stitched so far.
+                break;
+            };
+            let bytes = rgba_to_rgb24(&img);
+            if last.as_deref() == Some(bytes.as_slice()) {
+                // Same pixels as the previous poll: the screen did not change.
+                if armed && last_progress.elapsed() >= IDLE_STOP {
+                    finished = true;
+                    break;
+                }
+                continue;
+            }
+            last = Some(bytes.clone());
+
+            match stitcher.push(&bytes) {
+                Status::Accepted { new_rows } => {
+                    if new_rows > 0 && stitcher.rows() > region.height {
+                        // The first scroll frames the auto-stop rules from here.
+                        armed = true;
+                        last_progress = Instant::now();
+                        stalled = 0;
+                    }
+                    warning = None;
+                    emit_status(&app, &stitcher, warning.clone(), false);
+                }
+                Status::NoChange => {
+                    if armed {
+                        stalled += 1;
+                        if stalled >= 2 {
+                            finished = true;
+                            break;
+                        }
+                        if last_progress.elapsed() >= IDLE_STOP {
+                            finished = true;
+                            break;
+                        }
+                    }
+                    emit_status(&app, &stitcher, warning.clone(), false);
+                }
+                Status::LowConfidence => {
+                    stalled = 0;
+                    warning = Some(
+                        "you're scrolling too fast — the last step couldn't be matched".to_string(),
+                    );
+                    emit_status(&app, &stitcher, warning.clone(), false);
+                }
+                Status::Capped => {
+                    warning = Some(format!(
+                        "capture stopped at the {} px height limit",
+                        cap::MAX_HEIGHT
+                    ));
+                    finished = true;
+                    emit_status(&app, &stitcher, warning.clone(), true);
+                    break;
+                }
+            }
+        }
+
+        // Also covers a Done/cancel-driven stop, which is not "finished" for the UI.
+        emit_status(&app, &stitcher, warning, finished);
+        into_outcome(stitcher)
+    }
+
+    fn into_outcome(stitcher: ScrollingStitcher) -> Outcome {
+        let (pixels, width, height) = stitcher.into_image();
+        Outcome {
+            pixels,
+            width,
+            height,
+        }
     }
 }
 
@@ -658,5 +891,18 @@ mod tests {
             height: 100,
         };
         assert!(encode_png(outcome).is_err());
+    }
+
+    #[test]
+    fn rgba_frames_convert_to_tightly_packed_rgb24() {
+        // 2x1: one red pixel, one green pixel — alpha is dropped, nothing padded.
+        let mut img = image::RgbaImage::new(2, 1);
+        img.put_pixel(0, 0, image::Rgba([255, 0, 0, 128]));
+        img.put_pixel(1, 0, image::Rgba([0, 255, 0, 255]));
+        assert_eq!(
+            rgba_to_rgb24(&img),
+            vec![255, 0, 0, 0, 255, 0],
+            "exactly width*height*3 bytes, row-major"
+        );
     }
 }
