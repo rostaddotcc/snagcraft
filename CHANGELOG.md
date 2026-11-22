@@ -4,6 +4,11 @@ All notable changes to SnagCraft, newest first. Full release notes for every tag
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
 ## v1.5.5 (unreleased)
+- **Magnifying glass now magnifies what you drew.** A lens used to sample only the
+  original screenshot, so arrows, shapes and captions under it were missing from the
+  zoom (and from the export). It now magnifies the working composite — everything
+  stacked below the lens, blur/spotlight included — while objects above the lens stay
+  at their real size. Same behaviour on screen and in the saved PNG.
 - **Recordings play in the app.** Clicking a recording in **Recent** opens an in-app player
   instead of handing the file to another program: a play button on the preview, then a real
   transport bar — play/pause, current time, a scrub timeline you can drag, total length, mute,

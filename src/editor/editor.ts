@@ -27,6 +27,7 @@ import {
   MAX_STROKE_WIDTH,
   MIN_STROKE_WIDTH,
   STROKE_WIDTH,
+  MagnifyRegion,
   blurRegionPreview,
   clampMagnifyZoom,
   type Box,
@@ -255,6 +256,17 @@ export class Editor {
    */
   private base: CanvasImageSource | null = null;
 
+  /**
+   * Per-lens composite canvases (capture + everything drawn below that lens).
+   * Kept in image-pixel space so the viewport zoom/pan never invalidates them;
+   * `lensVersion` is bumped by anything that changes the scene's contents.
+   */
+  private readonly lensCanvases = new Map<
+    MagnifyRegion,
+    { version: number; canvas: HTMLCanvasElement }
+  >();
+  private lensVersion = 0;
+
   private tool: ToolId = "select";
   private cropBox: Box | null = null;
 
@@ -368,6 +380,19 @@ export class Editor {
     this.canvas.on("mouse:out", this.onMouseOut);
     this.canvas.on("object:modified", this.onObjectModified);
 
+    // Anything that changes what sits under a lens invalidates its cached
+    // composite — mid-drag moves included, since those never reach commit().
+    const lensEvents: (keyof fabric.CanvasEvents)[] = [
+      "object:added",
+      "object:removed",
+      "object:moving",
+      "object:scaling",
+      "object:rotating",
+      "text:changed",
+      "path:created",
+    ];
+    for (const event of lensEvents) this.canvas.on(event, this.onLensContentChange);
+
     // Fabric's own mouse:out is unreliable across the pointer leaving the
     // element, so the brush preview is also hidden on a native pointerleave.
     this.canvas.upperCanvasEl?.addEventListener("pointerleave", this.onPointerLeave);
@@ -444,6 +469,14 @@ export class Editor {
 
     const wasRestoring = this.restoring;
     this.restoring = true;
+
+    // Build every lens composite BEFORE the effect regions are hidden: a lens
+    // magnifies what the user sees, blur/spotlight included, so it must not be
+    // built from a scene with those objects temporarily invisible.
+    this.markLensDirty();
+    for (const lens of this.canvas.getObjects().filter(isMagnifyRegion)) {
+      this.lensComposite(lens);
+    }
 
     const effects = this.canvas.getObjects().filter(isEffectRegion);
     const hidden: fabric.FabricObject[] = [...effects, ...this.chrome];
@@ -1332,10 +1365,16 @@ export class Editor {
   private addObject(object: fabric.FabricObject): void {
     this.canvas.add(object);
     this.applyInteractivity(object);
+    // A lens added by the tool must composite immediately — waiting for the
+    // first commit would show the bare screenshot mid-drag.
+    if (isMagnifyRegion(object)) {
+      object.composer = () => this.lensComposite(object);
+    }
   }
 
   private removeObject(object: fabric.FabricObject): void {
     this.chrome.delete(object);
+    if (isMagnifyRegion(object)) this.lensCanvases.delete(object);
     this.canvas.remove(object);
   }
 
@@ -1447,8 +1486,105 @@ export class Editor {
     for (const lens of lenses) {
       lens.source = source;
       lens.background = { left: origin.left, top: origin.top, scaleX, scaleY };
+      // What the lens actually draws: the same grid, with everything the user
+      // has drawn below it burned in. Built lazily on the next render.
+      lens.composer = () => this.lensComposite(lens);
       lens.dirty = true;
     }
+    // Drop caches for lenses that are no longer in the scene.
+    for (const stale of this.lensCanvases.keys()) {
+      if (!lenses.includes(stale)) this.lensCanvases.delete(stale);
+    }
+    this.markLensDirty();
+  }
+
+  /** Any scene change makes every cached lens composite stale. */
+  private markLensDirty(): void {
+    this.lensVersion += 1;
+  }
+
+  /**
+   * Canvas-event hook: a moved/scaled lens does not change the content under
+   * it (only which region it samples), so lens-only drags skip the rebuild —
+   * the expensive case, since it runs on every pointer frame.
+   */
+  private readonly onLensContentChange = (event?: unknown): void => {
+    const target = (event as { target?: fabric.FabricObject } | undefined)?.target;
+    if (target && isMagnifyRegion(target)) {
+      const lenses = this.canvas.getObjects().filter(isMagnifyRegion);
+      // Another lens can sit above this one and composite it, so only skip the
+      // rebuild when this is the sole lens in the scene.
+      if (lenses.length <= 1) return;
+    }
+    this.markLensDirty();
+  };
+
+  /**
+   * The pixels a lens should magnify: the capture with every object stacked
+   * *below* that lens rendered on top — i.e. the working composite, so arrows,
+   * shapes and captions appear inside the lens instead of a bare screenshot.
+   *
+   * Rendered in image-pixel space (one canvas px = one captured px), which is
+   * the same grid `source` uses: the lens' centre/zoom maths is untouched, the
+   * live canvas and `flatten()` therefore agree, and viewport zoom/pan can
+   * never invalidate the cache. Objects *above* the lens stay out, so z-order
+   * semantics still hold (the lens magnifies what is under it).
+   */
+  private lensComposite(lens: MagnifyRegion): HTMLCanvasElement | null {
+    const image = this.image;
+    if (!image) return null;
+    const { width, height } = this.natural;
+    if (width <= 0 || height <= 0) return null;
+
+    const cached = this.lensCanvases.get(lens);
+    if (cached && cached.version === this.lensVersion && cached.canvas.width === width && cached.canvas.height === height) {
+      return cached.canvas;
+    }
+
+    const canvas =
+      cached && cached.canvas.width === width && cached.canvas.height === height
+        ? cached.canvas
+        : document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+
+    const place = lens.background;
+    const scaleX = place?.scaleX || image.scaleX || 1;
+    const scaleY = place?.scaleY || image.scaleY || 1;
+    const left = place?.left ?? image.left ?? 0;
+    const top = place?.top ?? image.top ?? 0;
+
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, width, height);
+    // Scene coordinates → image pixels (object.render applies its own matrix).
+    context.setTransform(1 / scaleX, 0, 0, 1 / scaleY, -left / scaleX, -top / scaleY);
+
+    // Objects are sorted bottom-to-top: everything before the lens is "below".
+    const below: fabric.FabricObject[] = [];
+    for (const object of this.canvas.getObjects()) {
+      if (object === lens) break;
+      if (object.visible === false || this.chrome.has(object)) continue;
+      below.push(object);
+    }
+
+    const skipOffscreen = this.canvas.skipOffscreen;
+    // Objects scrolled out of the viewport must still land in the composite.
+    this.canvas.skipOffscreen = false;
+    try {
+      for (const object of below) {
+        context.save();
+        object.render(context);
+        context.restore();
+      }
+    } finally {
+      this.canvas.skipOffscreen = skipOffscreen;
+    }
+
+    this.lensCanvases.set(lens, { version: this.lensVersion, canvas });
+    lens.dirty = true;
+    return canvas;
   }
 
   /** Typography the text tool should use for a new caption. */

@@ -1935,6 +1935,32 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
 - Still gated: live Windows/macOS verification on rostad's hardware, his "helt
   perfekt" verdict, and only after that a NEW Rust port attempt.
 
+## 2026-11-22 (wake 7) — magnify lens samples the working composite
+
+- rostad: after drawing on a capture, the lens only zoomed the bare screenshot —
+  annotations never appeared inside it. Noted in `docs/known-issues.md` first,
+  then fixed on his "ja ta den".
+- `tools.ts`: `MagnifyRegion.composer` (a `() => HTMLCanvasElement | null` the
+  Editor installs); `_render` prefers it over `source`, which stays the fallback
+  for a lens restored before its composite exists. Docstring corrected — the
+  old one documented the bug as intent.
+- `editor.ts`: `lensComposite(lens)` renders everything stacked **below** the lens
+  into an offscreen canvas in image-pixel space (identical grid + placement to
+  `source`, so the zoom/centre maths is untouched), cached per lens and versioned
+  by `lensVersion` (bumped from `object:added/removed/moving/scaling/rotating`,
+  `text:changed`, `path:created`, `refreshMagnifySources`). Lens-only drags skip
+  the rebuild (sole-lens check), `skipOffscreen` is forced off while compositing,
+  and `flatten()` builds the composites **before** hiding effect regions so a
+  lens over a blur magnifies the blur rather than leaking raw pixels.
+- Dev seam: `window.__snagEditor` on the Vite dev port (1420) only — lets a
+  browser drive the real tools (`editor.tools.get(id).onPointerDown(...)`) and
+  pixel-probe the canvas/export. No effect on packaged builds.
+- Verified with that seam in Chromium: arrow under the lens → 630/900 ink at the
+  lens centre (0/900 on the reverted code — negative control run first), the
+  exported `flatten()` PNG → 528/576, arrow drawn **above** the lens → 0 ink in
+  the aperture (drawn on top at 1:1 instead). Rebuild cost 0.22 ms at 1280×800.
+  Vision confirms the shaft is thicker and continuous inside the lens.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

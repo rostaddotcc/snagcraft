@@ -250,14 +250,15 @@ const lensPath = (
 /**
  * Magnify lens: a live magnifier, not a tinted placeholder.
  *
- * `_render` paints the real screenshot pixels under the box, blown up `zoom`x
- * about the lens centre and clipped to a rounded aperture, so the enlargement
- * is visible while editing. `flatten()` runs this very same `_render` on the
- * ink layer, so the export needs no separate magnify pass and cannot drift
- * from the canvas.
+ * `_render` paints the pixels the Editor hands it — the capture *with every
+ * annotation that sits below the lens burned in* — blown up `zoom`x about the
+ * lens centre and clipped to a rounded aperture, so the enlargement is visible
+ * while editing. `flatten()` runs this very same `_render` on the ink layer, so
+ * the export needs no separate magnify pass and cannot drift from the canvas.
  *
- * The pixels come from the background screenshot (never from annotations), so
- * the lens always magnifies the capture itself.
+ * The Editor owns what is under the lens (see `Editor.lensComposite`): the bare
+ * screenshot is only the fallback for a lens whose composite has not been built
+ * yet (fresh undo/redo state).
  */
 export class MagnifyRegion extends fabric.Rect {
   static type = "snagcraft_magnify";
@@ -265,10 +266,16 @@ export class MagnifyRegion extends fabric.Rect {
   static customProperties = ["zoom"];
   zoom = MAGNIFY_ZOOM;
   /**
-   * The screenshot layer to sample. Not serialized — the Editor re-attaches it
-   * (see `refreshMagnifySources`) after load / undo / resize.
+   * The pixels to sample when no composite is available — the screenshot layer.
+   * Not serialized; the Editor re-attaches it (see `refreshMagnifySources`).
    */
   source: HTMLImageElement | HTMLCanvasElement | null = null;
+  /**
+   * Live composite below this lens, supplied by the Editor on demand. Same
+   * pixel grid and placement as `source`, so the zoom maths is identical —
+   * it just also contains the annotations the user drew under the lens.
+   */
+  composer: (() => HTMLCanvasElement | null) | null = null;
   /** Placement of that layer in scene coords; set together with `source`. */
   background: LensBackground | null = null;
 
@@ -293,7 +300,9 @@ export class MagnifyRegion extends fabric.Rect {
     const top = -h / 2;
     const radius = this.rx ? Math.min(this.rx, Math.min(w, h) / 2) : Math.min(w, h) * 0.12;
     const zoom = clampMagnifyZoom(this.zoom);
-    const source = this.source;
+    // Prefer the live composite (capture + annotations below the lens); fall
+    // back to the bare screenshot before the Editor has built one.
+    const source = this.composer?.() ?? this.source;
     const natural = source ? sourceSize(source) : null;
 
     ctx.save();

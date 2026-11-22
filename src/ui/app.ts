@@ -1506,6 +1506,14 @@ export function mountApp(root: HTMLElement): void {
 
   const editor = new Editor(editorEl) as InkEditor;
 
+  // Dev-server seam: `pnpm dev` (port 1420) exposes the live editor as
+  // `window.__snagEditor`, so tools can be driven programmatically — pixel
+  // checks for the magnify composite, drag gates. A packaged app never has
+  // that port, so this stays out of real builds.
+  if (location.port === "1420") {
+    (window as unknown as Record<string, unknown>).__snagEditor = editor;
+  }
+
   // Quick text settings: font/size/bold/italic/colour floating right on the
   // caption being edited or selected. The editor bridge keeps this Tauri-free.
   const textBar = new TextBar({
