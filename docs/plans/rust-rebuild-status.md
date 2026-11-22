@@ -1876,6 +1876,12 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   platform-neutral; the old NOT_SUPPORTED bail just surfaced as an error).
 - Gates: fmt/clippy/104 tests clean; CI run 45012641849 = Windows compile
   proof. Live Windows scrolling needs rostad's hardware.
+- **Run 45012641849 windows FAILED (wake 6):** E0382 — the spawn closure
+  moved the Arc stop flag (via stop.clone() INSIDE the move closure) and the
+  Active literal reused it. Linux imp clones before the thread block; the
+  Windows imp now mirrors that (229adeb). Re-dispatched run 45013678406.
+  Lesson re-confirmed: cfg(not(linux)) code has NO local compile gate —
+  review move/borrow semantics by hand before pushing.
 
 ## Appendix — measured reality
 
