@@ -231,7 +231,7 @@ Please **don't** open public issues for vulnerabilities. Use
 | System tray + floating widget | ✅ | ⚠️ |
 | Start at login | ✅ XDG autostart | ⚠️ registry Run key |
 | Screen recording | ✅ ScreenCast portal (needs `ffmpeg`) | ⚠️ ffmpeg `gdigrab` |
-| Scrolling capture | ✅ | 🔜 |
+| Scrolling capture | ✅ | ⚠️ xcap region polling |
 | Global hotkeys | ✅ GlobalShortcuts portal | ⚠️ native (RegisterHotKey) |
 
 > **Windows is compile-verified only.** The stable line's `.exe` is built by CI from

@@ -1882,6 +1882,12 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   Windows imp now mirrors that (229adeb). Re-dispatched run 45013678406.
   Lesson re-confirmed: cfg(not(linux)) code has NO local compile gate —
   review move/borrow semantics by hand before pushing.
+- **Run 45013678406 GREEN (wake 6):** quality + linux + windows success.
+  All four Windows/macOS backlog items are now compile-verified in main:
+  multi-monitor composite capture + screen chooser, window chooser, native
+  global hotkeys, scrolling capture. README platforms table has zero 🔜 left;
+  the Windows column is honestly ⚠️ (compile-verified, never run on real
+  hardware). Remaining gate: live verification on rostad's Windows box.
 
 ## Appendix — measured reality
 
