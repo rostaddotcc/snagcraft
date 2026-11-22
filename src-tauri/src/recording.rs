@@ -2350,7 +2350,6 @@ mod win {
     use std::io::Write as _;
     use std::process::{Command, Stdio};
     use std::time::Duration;
-    use tauri::Emitter as _;
 
     const FRAMERATE: u32 = 30;
 
