@@ -3,6 +3,18 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.5.5 (unreleased)
+- **Recordings play in the app.** Clicking a recording in **Recent** opens an in-app player
+  instead of handing the file to another program: a play button on the preview, then a real
+  transport bar — play/pause, current time, a scrub timeline you can drag, total length, mute,
+  and a button to open the file externally when you need it. Space toggles playback, ←/→ seek
+  (Shift = 1 s), Esc closes.
+- **Recent tiles show what a clip is.** Recordings now carry a red dot on the thumbnail and
+  their length in the corner, so the strip answers "recording, 7 seconds" before you click.
+- **Frame-preview fallback.** If the platform's webview has no decoder for the clip's codec
+  (bare WebKitGTK without `gst-libav`, for example), the player steps real ffmpeg frames with
+  the same draggable timeline instead of failing — and says so in one line.
+
 ## v1.5.4
 - **Multi-monitor capture — issue #1 (Windows/macOS).** Capture → **Choose screen** now lists
   every connected display in SnagCraft's own chooser (name, resolution, scale factor, which one

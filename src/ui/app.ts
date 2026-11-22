@@ -1,6 +1,6 @@
 // SnagCraft app shell — top bar, annotation toolbar, editor stage, status line.
 // Talks to the locked Editor API and the locked Tauri command set only.
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -247,6 +247,24 @@ const ICONS = {
   ),
   image: icon(
     `<rect x="2.4" y="3" width="11.2" height="10" rx="1.4"/><circle cx="6" cy="6.4" r="1.1"/><path d="M2.6 11.4l3.2-3 2.6 2.2 2.2-2.4 2.8 3"/>`,
+  ),
+  play: icon(
+    `<path d="M5.4 3.2 12.4 8l-7 4.8z" fill="currentColor" stroke="none"/>`,
+  ),
+  pause: icon(
+    `<rect x="4.4" y="3.2" width="2.6" height="9.6" rx="0.9" fill="currentColor" stroke="none"/><rect x="9" y="3.2" width="2.6" height="9.6" rx="0.9" fill="currentColor" stroke="none"/>`,
+  ),
+  replay: icon(
+    `<path d="M3.2 8a4.8 4.8 0 1 0 1.5-3.5"/><path d="M3 2.9v3.2h3.2"/>`,
+  ),
+  volume: icon(
+    `<path d="M3 6.2h2.2L8.6 3.4v9.2L5.2 9.8H3z"/><path d="M10.8 5.8a3.2 3.2 0 0 1 0 4.4"/>`,
+  ),
+  volumeOff: icon(
+    `<path d="M3 6.2h2.2L8.6 3.4v9.2L5.2 9.8H3z"/><path d="M10.8 6.4 13.4 9.6M13.4 6.4 10.8 9.6"/>`,
+  ),
+  external: icon(
+    `<path d="M9.4 2.6h4v4"/><path d="M13.4 2.6 8 8"/><path d="M11.6 9.6v2.6a1.2 1.2 0 0 1-1.2 1.2H3.8a1.2 1.2 0 0 1-1.2-1.2V5.6a1.2 1.2 0 0 1 1.2-1.2h2.6"/>`,
   ),
 };
 
@@ -714,6 +732,8 @@ type RecentShot = {
   ext?: string;
   /** File name for path-backed entries (tooltip / status). */
   name?: string;
+  /** Clip length in ms (videos only) — shown on the tile and in the player. */
+  durationMs?: number;
 };
 
 /** One row from `list_folder_media` — the save folder's contents. */
@@ -723,7 +743,12 @@ type FolderMedia = {
   kind: "image" | "video";
   modified: number;
   thumb: string;
+  /** Clip length in ms, absent/null when ffprobe couldn't read it. */
+  durationMs: number | null;
 };
+
+/** What `recording_meta` returns for a freshly finished recording. */
+type RecordingMeta = { thumb: string; durationMs: number | null };
 
 const escapeHtml = (value: string): string =>
   value
@@ -938,6 +963,25 @@ export function mountApp(root: HTMLElement): void {
         <p class="empty-text">Press <kbd>PrintScreen</kbd> for the full screen, <span class="key-pair"><kbd>Shift</kbd><kbd>PrintScreen</kbd></span> for a region — or pick a mode from <strong>Capture</strong>.</p>
         <p class="empty-note">Captures are saved to your save folder automatically — switch that off in Settings → General.</p>
       </div>
+
+      <section class="player" id="player" hidden aria-label="Recording player">
+        <div class="player-view" id="player-view">
+          <video class="player-video" id="player-video" playsinline preload="metadata" hidden></video>
+          <img class="player-poster" id="player-poster" alt="" hidden />
+          <button type="button" class="player-big" id="player-big" aria-label="Play recording" title="Play">${ICONS.play}</button>
+          <p class="player-note" id="player-note" hidden></p>
+        </div>
+        <div class="player-bar">
+          <button type="button" class="player-btn player-btn-main" id="player-toggle" aria-label="Play" title="Play / pause (Space)">${ICONS.play}</button>
+          <span class="player-clock" id="player-cur">0:00</span>
+          <input type="range" class="player-range" id="player-range" min="0" max="1000" step="1" value="0" aria-label="Seek" />
+          <span class="player-clock player-clock-total" id="player-dur">0:00</span>
+          <button type="button" class="player-btn" id="player-mute" aria-label="Mute" title="Mute">${ICONS.volume}</button>
+          <span class="player-sep" aria-hidden="true"></span>
+          <button type="button" class="player-btn" id="player-ext" aria-label="Open in another program" title="Open in another program">${ICONS.external}</button>
+          <button type="button" class="player-btn" id="player-close" aria-label="Close preview" title="Close preview (Esc)">${ICONS.close}</button>
+        </div>
+      </section>
 
       <footer class="filmstrip" id="filmstrip" hidden aria-label="Recent captures">
         <div class="filmstrip-resize" id="film-resize" role="separator" aria-orientation="horizontal" tabindex="0" aria-label="Resize recent captures" title="Drag to resize · double-click to reset"></div>
@@ -1257,6 +1301,8 @@ export function mountApp(root: HTMLElement): void {
             <div><dt><kbd>Ctrl</kbd> + <kbd>,</kbd></dt><dd>Settings</dd></div>
             <div><dt><kbd>Delete</kbd> · <kbd>Backspace</kbd></dt><dd>Delete selected annotation</dd></div>
             <div><dt><kbd>Esc</kbd></dt><dd>Cancel / deselect / close</dd></div>
+            <div><dt><kbd>Space</kbd> · <kbd>K</kbd></dt><dd>Play / pause a recording (player open)</dd></div>
+            <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Seek a recording 5 s (Shift = 1 s)</dd></div>
             <div><dt><kbd>?</kbd></dt><dd>This help</dd></div>
           </dl>
         </div>
@@ -1430,6 +1476,18 @@ export function mountApp(root: HTMLElement): void {
   const filmEmptyEl = $<HTMLParagraphElement>("#film-empty");
   const filmClearBtn = $<HTMLButtonElement>("#film-clear");
   const filmCloseBtn = $<HTMLButtonElement>("#film-close");
+  const playerEl = $<HTMLElement>("#player");
+  const playerVideoEl = $<HTMLVideoElement>("#player-video");
+  const playerPosterEl = $<HTMLImageElement>("#player-poster");
+  const playerBigBtn = $<HTMLButtonElement>("#player-big");
+  const playerNoteEl = $<HTMLParagraphElement>("#player-note");
+  const playerToggleBtn = $<HTMLButtonElement>("#player-toggle");
+  const playerCurEl = $<HTMLSpanElement>("#player-cur");
+  const playerRangeEl = $<HTMLInputElement>("#player-range");
+  const playerDurEl = $<HTMLSpanElement>("#player-dur");
+  const playerMuteBtn = $<HTMLButtonElement>("#player-mute");
+  const playerExtBtn = $<HTMLButtonElement>("#player-ext");
+  const playerCloseBtn = $<HTMLButtonElement>("#player-close");
   const ocrBtn = $<HTMLButtonElement>("#ocr");
   const ocrModalEl = $<HTMLDivElement>("#ocr-modal");
   const ocrLangSelect = $<HTMLSelectElement>("#ocr-lang");
@@ -2161,6 +2219,8 @@ export function mountApp(root: HTMLElement): void {
   }
 
   function setImageState(loaded: boolean): void {
+    // A capture or an image takes the stage back from the recording player.
+    if (loaded && playerIsOpen()) closePlayer();
     hasImage = loaded;
     stageEl.classList.toggle("has-image", loaded);
     emptyEl.setAttribute("aria-hidden", String(loaded));
@@ -4081,8 +4141,11 @@ export function mountApp(root: HTMLElement): void {
     const clean = path.trim();
     if (!clean) return;
     let thumb = "";
+    let durationMs: number | undefined;
     try {
-      thumb = await invoke<string>("recording_thumb", { path: clean });
+      const meta = await invoke<RecordingMeta>("recording_meta", { path: clean });
+      thumb = meta.thumb;
+      if (meta.durationMs && meta.durationMs > 0) durationMs = meta.durationMs;
     } catch {
       /* no ffmpeg / unreadable file — the strip shows a film icon instead */
     }
@@ -4095,6 +4158,7 @@ export function mountApp(root: HTMLElement): void {
       label,
       kind: "video",
       path: clean,
+      durationMs,
     };
     recent = [entry, ...recent].slice(0, RECENT_LIMIT);
     renderFilm();
@@ -4133,6 +4197,7 @@ export function mountApp(root: HTMLElement): void {
             path: file.path,
             ext,
             name: file.name,
+            durationMs: file.durationMs && file.durationMs > 0 ? file.durationMs : undefined,
           });
         }
       }
@@ -4172,16 +4237,27 @@ export function mountApp(root: HTMLElement): void {
           : ext && ext !== "PNG"
             ? ext
             : formatLabel(item.format);
+        const length = isVideo ? fmtLength(item.durationMs) : "";
+        // The dot marks a recording; the chip carries its length, so the strip
+        // tells you "clip, 7 seconds" before you click anything.
+        const marks = isVideo
+          ? `<span class="film-rec" aria-hidden="true"></span>${
+              length ? `<span class="film-dur">${length}</span>` : ""
+            }`
+          : "";
         const thumbHtml = item.thumb
-          ? `<span class="film-thumb"><img src="${item.thumb}" alt="" loading="lazy" /></span>`
+          ? `<span class="film-thumb"><img src="${item.thumb}" alt="" loading="lazy" />${marks}</span>`
           : `<span class="film-thumb${isVideo ? " film-thumb-video" : ""}">${
               isVideo ? ICONS.film : ICONS.full
-            }</span>`;
+            }${marks}</span>`;
+        const title = `${item.label} · ${clockLabel(item.ts)} · ${badge}${
+          isVideo ? ` · recording${length ? ` (${length})` : ""}` : ""
+        }`;
         return `<button type="button" class="film-item${
           item.id === loadedRecentId ? " is-active" : ""
         }" data-id="${item.id}" role="option" aria-selected="${
           item.id === loadedRecentId
-        }" title="${escapeHtml(item.label)} · ${clockLabel(item.ts)} · ${badge}">
+        }" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">
           ${thumbHtml}
           <span class="film-caption"><span class="film-badge">${badge}</span><span class="film-time">${clockLabel(
             item.ts,
@@ -4204,12 +4280,9 @@ export function mountApp(root: HTMLElement): void {
     if (!item) return;
     if (item.path) {
       if (item.kind === "video") {
-        try {
-          await invoke("open_path", { path: item.path });
-          setStatus(`Opened recording: ${item.path}`, "success");
-        } catch (e) {
-          setStatus(`Could not open the recording: ${errText(e)}`, "error");
-        }
+        // Recordings preview in-app (play button + transport); "open in another
+        // program" stays one click away in the player's bar.
+        openRecording(item);
         return;
       }
       // Folder-backed image: read it back from disk (nothing is held in memory).
@@ -4250,6 +4323,370 @@ export function mountApp(root: HTMLElement): void {
     } catch (e) {
       setStatus(`Could not reload that capture: ${errText(e)}`, "error");
     }
+  }
+
+  /* --------------------------------------------------------------- player */
+
+  /**
+   * In-app preview for recordings. Two modes behind one timeline:
+   *  - "video": a real <video> element (asset protocol), full transport control.
+   *  - "frames": ffmpeg frames on demand, for webviews with no decoder for the
+   *    clip's codec (H.264 in a bare WebKitGTK is the common case) — the
+   *    timeline still scrubs, it just steps frames instead of streaming.
+   * GIFs animate on their own in an <img>, so they carry no transport.
+   */
+  type PlayerMode = "video" | "frames" | "gif";
+
+  const PLAYER_STEPS = 1000;
+  const PLAYER_FRAME_WIDTH = 1600;
+
+  const player = {
+    item: null as RecentShot | null,
+    mode: "video" as PlayerMode,
+    durationMs: 0,
+    positionMs: 0,
+    playing: false,
+    scrubbing: false,
+    frameInFlight: false,
+    pendingFrameMs: null as number | null,
+    frameTimer: 0,
+    watchdog: 0,
+  };
+
+  function playerIsOpen(): boolean {
+    return !playerEl.hidden;
+  }
+
+  /** `0:07` — the clock readout in the transport bar. */
+  function fmtClock(ms: number): string {
+    const total = Math.max(0, Math.round(ms / 1000));
+    const mins = Math.floor(total / 60);
+    const secs = total % 60;
+    return `${mins}:${String(secs).padStart(2, "0")}`;
+  }
+
+  /** `7s` for short clips, `1:23` from a minute up — the tile overlay. */
+  function fmtLength(ms: number | undefined): string {
+    if (ms === undefined || !Number.isFinite(ms) || ms <= 0) return "";
+    if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s`;
+    return fmtClock(ms);
+  }
+
+  function syncPlayerBar(): void {
+    const duration = player.durationMs;
+    const position = Math.max(0, Math.min(player.positionMs, duration > 0 ? duration : player.positionMs));
+    const ratio = duration > 0 ? Math.min(1, position / duration) : 0;
+    if (!player.scrubbing) playerRangeEl.value = String(Math.round(ratio * PLAYER_STEPS));
+    playerRangeEl.style.setProperty("--player-fill", `${(ratio * 100).toFixed(2)}%`);
+    playerRangeEl.disabled = duration <= 0;
+    playerCurEl.textContent = fmtClock(duration > 0 ? position : 0);
+    playerDurEl.textContent = duration > 0 ? fmtClock(duration) : "--:--";
+    playerRangeEl.setAttribute("aria-valuetext", `${fmtClock(position)} of ${fmtClock(duration)}`);
+    const playing = player.mode === "video" && player.playing;
+    playerToggleBtn.innerHTML = playing ? ICONS.pause : ICONS.play;
+    playerToggleBtn.setAttribute("aria-label", playing ? "Pause" : "Play");
+    playerToggleBtn.disabled = player.mode !== "video";
+    const atEnd = duration > 0 && position >= duration - 120;
+    playerBigBtn.hidden = playing || player.mode !== "video";
+    playerBigBtn.innerHTML = atEnd ? ICONS.replay : ICONS.play;
+    playerMuteBtn.innerHTML = playerVideoEl.muted ? ICONS.volumeOff : ICONS.volume;
+    playerMuteBtn.setAttribute("aria-label", playerVideoEl.muted ? "Unmute" : "Mute");
+  }
+
+  function setPlayerOpen(open: boolean): void {
+    playerEl.hidden = !open;
+    stageEl.classList.toggle("is-video", open);
+  }
+
+  function stopPlayerWatchdog(): void {
+    if (player.watchdog) {
+      window.clearTimeout(player.watchdog);
+      player.watchdog = 0;
+    }
+  }
+
+  function cancelFrameTimer(): void {
+    if (player.frameTimer) {
+      window.clearTimeout(player.frameTimer);
+      player.frameTimer = 0;
+    }
+    player.pendingFrameMs = null;
+  }
+
+  /** Show a frame from the backend — the scrub fallback and the open poster. */
+  async function pumpFrame(): Promise<void> {
+    const item = player.item;
+    const target = player.pendingFrameMs;
+    if (!item?.path || target === null || player.frameInFlight) return;
+    player.pendingFrameMs = null;
+    player.frameInFlight = true;
+    try {
+      const url = await invoke<string>("recording_frame", {
+        path: item.path,
+        ms: Math.round(target),
+        maxWidth: PLAYER_FRAME_WIDTH,
+      });
+      // A newer clip (or a closed player) must not be overwritten by a slow frame.
+      if (player.item === item && player.mode === "frames") playerPosterEl.src = url;
+    } catch {
+      /* ffmpeg missing or the file is gone — keep the last frame on screen */
+    }
+    player.frameInFlight = false;
+    if (player.pendingFrameMs !== null && player.item === item) void pumpFrame();
+  }
+
+  function scheduleFrame(ms: number, delayMs: number): void {
+    player.pendingFrameMs = ms;
+    if (player.frameTimer) window.clearTimeout(player.frameTimer);
+    player.frameTimer = window.setTimeout(() => {
+      player.frameTimer = 0;
+      void pumpFrame();
+    }, delayMs);
+  }
+
+  /** Swap the video element for ffmpeg frames (unsupported codec). */
+  function enterFrameMode(): void {
+    if (!playerIsOpen() || !player.item) return;
+    stopPlayerWatchdog();
+    cancelFrameTimer();
+    player.mode = "frames";
+    player.playing = false;
+    playerVideoEl.pause();
+    playerVideoEl.hidden = true;
+    playerEl.classList.add("is-frames");
+    playerPosterEl.hidden = false;
+    if (!playerPosterEl.getAttribute("src") && player.item.thumb) {
+      playerPosterEl.src = player.item.thumb;
+    }
+    if (!player.durationMs) player.durationMs = player.item.durationMs ?? 0;
+    playerNoteEl.hidden = false;
+    playerNoteEl.textContent =
+      "Frame preview — this system has no in-app decoder for the clip's codec. Drag the bar to scrub.";
+    scheduleFrame(player.positionMs, 0);
+    syncPlayerBar();
+  }
+
+  function playerTogglePlay(): void {
+    if (!playerIsOpen() || player.mode !== "video") return;
+    if (playerVideoEl.paused) {
+      const duration = playerVideoEl.duration;
+      if (Number.isFinite(duration) && duration > 0 && playerVideoEl.currentTime >= duration - 0.08) {
+        playerVideoEl.currentTime = 0;
+      }
+      void playerVideoEl.play().catch(() => {
+        /* autoplay/codec refusal: fall back to frame scrubbing */
+        enterFrameMode();
+      });
+    } else {
+      playerVideoEl.pause();
+    }
+  }
+
+  function playerSeek(ms: number): void {
+    const duration = player.durationMs;
+    const target = Math.max(0, duration > 0 ? Math.min(ms, duration) : ms);
+    player.positionMs = target;
+    if (player.mode === "video") {
+      if (playerVideoEl.readyState >= 1) {
+        try {
+          playerVideoEl.currentTime = target / 1000;
+        } catch {
+          /* not seekable yet — the next timeupdate catches up */
+        }
+      }
+    } else if (player.mode === "frames") {
+      scheduleFrame(target, player.scrubbing ? 90 : 0);
+    }
+    syncPlayerBar();
+  }
+
+  function closePlayer(): void {
+    if (!playerIsOpen()) return;
+    stopPlayerWatchdog();
+    cancelFrameTimer();
+    const wasVideo = player.item?.kind === "video";
+    playerVideoEl.pause();
+    playerVideoEl.removeAttribute("src");
+    playerVideoEl.removeAttribute("poster");
+    playerVideoEl.load();
+    player.item = null;
+    player.mode = "video";
+    player.playing = false;
+    player.scrubbing = false;
+    player.durationMs = 0;
+    player.positionMs = 0;
+    playerPosterEl.hidden = true;
+    playerPosterEl.removeAttribute("src");
+    playerVideoEl.hidden = true;
+    playerNoteEl.hidden = true;
+    playerEl.classList.remove("is-frames", "is-gif");
+    setPlayerOpen(false);
+    if (wasVideo && loadedRecentId && recent.find((r) => r.id === loadedRecentId)?.kind === "video") {
+      loadedRecentId = null;
+      renderFilm();
+    }
+  }
+
+  /** Open a recording in the in-app player (replaces the old external hand-off). */
+  function openRecording(item: RecentShot): void {
+    const path = item.path ?? "";
+    if (!path) return;
+
+    stopPlayerWatchdog();
+    cancelFrameTimer();
+    playerVideoEl.pause();
+    playerVideoEl.removeAttribute("src");
+    playerVideoEl.removeAttribute("poster");
+    playerVideoEl.load();
+
+    const ext = (item.ext ?? path.split(".").pop() ?? "").toLowerCase();
+    player.item = item;
+    player.mode = "video";
+    player.playing = false;
+    player.scrubbing = false;
+    player.durationMs = item.durationMs ?? 0;
+    player.positionMs = 0;
+
+    loadedRecentId = item.id;
+    renderFilm();
+    playerEl.classList.remove("is-frames", "is-gif");
+    playerEl.classList.toggle("is-gif", ext === "gif");
+    playerNoteEl.hidden = true;
+    playerPosterEl.hidden = true;
+    playerPosterEl.removeAttribute("src");
+    playerVideoEl.hidden = true;
+    let url = "";
+    try {
+      url = convertFileSrc(path);
+    } catch {
+      url = "";
+    }
+    if (ext === "gif" || !url) {
+      // Animated image (or no asset protocol): show it in an <img>, no transport.
+      player.mode = "gif";
+      playerPosterEl.src = url || item.thumb;
+      playerPosterEl.hidden = false;
+      if (ext !== "gif") {
+        playerNoteEl.hidden = false;
+        playerNoteEl.textContent = "This file can't be previewed in-app — open it in another program.";
+      }
+      setPlayerOpen(true);
+      syncPlayerBar();
+      return;
+    }
+
+    playerVideoEl.poster = item.thumb || "";
+    playerVideoEl.hidden = false;
+    setPlayerOpen(true);
+    playerVideoEl.src = url;
+    syncPlayerBar();
+    // A webview that refuses the codec sometimes fires no error at all —
+    // if no metadata has landed by now, scrub frames instead.
+    player.watchdog = window.setTimeout(() => {
+      player.watchdog = 0;
+      if (playerIsOpen() && player.mode === "video" && playerVideoEl.readyState < 1) {
+        enterFrameMode();
+      }
+    }, 2500);
+  }
+
+  /** Keys that only make sense while the player is up (Space, ←/→, Esc, M). */
+  function handlePlayerKeys(ev: KeyboardEvent): boolean {
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return false;
+    const target = ev.target as HTMLElement | null;
+    const typing =
+      !!target &&
+      (target.tagName === "TEXTAREA" ||
+        (target.tagName === "INPUT" && target !== playerRangeEl) ||
+        target.isContentEditable);
+    if (typing) return false;
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      closePlayer();
+      return true;
+    }
+    if (ev.key === " " || ev.key === "k" || ev.key === "K") {
+      if (target === playerRangeEl) return false;
+      ev.preventDefault();
+      playerTogglePlay();
+      return true;
+    }
+    if (ev.key === "ArrowRight" || ev.key === "ArrowLeft") {
+      if (target === playerRangeEl) return false;
+      ev.preventDefault();
+      const step = ev.shiftKey ? 1000 : 5000;
+      playerSeek(player.positionMs + (ev.key === "ArrowRight" ? step : -step));
+      return true;
+    }
+    if (ev.key === "m" || ev.key === "M") {
+      ev.preventDefault();
+      playerVideoEl.muted = !playerVideoEl.muted;
+      syncPlayerBar();
+      return true;
+    }
+    return false;
+  }
+
+  function wirePlayer(): void {
+    playerBigBtn.addEventListener("click", () => playerTogglePlay());
+    playerToggleBtn.addEventListener("click", () => playerTogglePlay());
+    playerVideoEl.addEventListener("click", () => playerTogglePlay());
+    playerCloseBtn.addEventListener("click", () => closePlayer());
+    playerMuteBtn.addEventListener("click", () => {
+      playerVideoEl.muted = !playerVideoEl.muted;
+      syncPlayerBar();
+    });
+    playerExtBtn.addEventListener("click", () => {
+      const path = player.item?.path;
+      if (!path) return;
+      void invoke("open_path", { path })
+        .then(() => setStatus(`Opened ${player.item?.name ?? "the recording"} in another program.`, "success"))
+        .catch((e) => setStatus(`Could not open the recording: ${errText(e)}`, "error"));
+    });
+
+    playerRangeEl.addEventListener("input", () => {
+      player.scrubbing = true;
+      const ratio = Number(playerRangeEl.value) / PLAYER_STEPS;
+      playerSeek(ratio * (player.durationMs || 0));
+    });
+    playerRangeEl.addEventListener("change", () => {
+      player.scrubbing = false;
+      const ratio = Number(playerRangeEl.value) / PLAYER_STEPS;
+      playerSeek(ratio * (player.durationMs || 0));
+    });
+
+    playerVideoEl.addEventListener("loadedmetadata", () => {
+      stopPlayerWatchdog();
+      if (!playerIsOpen() || player.mode !== "video") return;
+      const duration = playerVideoEl.duration;
+      if (Number.isFinite(duration) && duration > 0) {
+        player.durationMs = Math.round(duration * 1000);
+        syncPlayerBar();
+      }
+    });
+    playerVideoEl.addEventListener("loadeddata", stopPlayerWatchdog);
+    playerVideoEl.addEventListener("timeupdate", () => {
+      if (player.mode !== "video" || player.scrubbing) return;
+      player.positionMs = playerVideoEl.currentTime * 1000;
+      syncPlayerBar();
+    });
+    playerVideoEl.addEventListener("play", () => {
+      stopPlayerWatchdog();
+      player.playing = true;
+      syncPlayerBar();
+    });
+    playerVideoEl.addEventListener("pause", () => {
+      player.playing = false;
+      syncPlayerBar();
+    });
+    playerVideoEl.addEventListener("ended", () => {
+      player.playing = false;
+      player.positionMs = player.durationMs;
+      syncPlayerBar();
+    });
+    playerVideoEl.addEventListener("error", () => {
+      if (playerIsOpen() && player.mode === "video") enterFrameMode();
+    });
   }
 
   /* ----------------------------------------------------------------- ocr */
@@ -5288,6 +5725,7 @@ export function mountApp(root: HTMLElement): void {
       closeShortcuts();
       return;
     }
+    if (playerIsOpen() && handlePlayerKeys(ev)) return;
     if (ev.code === "PrintScreen" || ev.key === "PrintScreen") {
       ev.preventDefault();
       void runCapture(ev.shiftKey ? "region" : "full");
@@ -5553,6 +5991,7 @@ export function mountApp(root: HTMLElement): void {
   syncBlurFromEditor();
 
   renderPresets();
+  wirePlayer();
   renderFilm();
   ocrLangSelect.value = ocrLang;
 

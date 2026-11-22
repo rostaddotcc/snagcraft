@@ -79,7 +79,9 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 - **Upload** to your own endpoint, with the returned link copied to the clipboard
 - Auto-save on capture, custom filename patterns (`{date}`, `{time}`, `{datetime}`)
 - **OCR** — extract text from a capture (English / Swedish) via the system `tesseract`
-- Recent-captures filmstrip — **resizable**: drag its top edge for bigger thumbnails
+- Recent-captures filmstrip — **resizable**: drag its top edge for bigger thumbnails;
+  recordings carry a red dot and their length, and open in an in-app player
+  (play/pause, scrub timeline, mute, open externally)
 
 **Open & record**
 - **New canvas** (`Ctrl+N`) — start drawing immediately on a white canvas; pick a preset

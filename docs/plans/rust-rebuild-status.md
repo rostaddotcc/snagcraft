@@ -1889,6 +1889,34 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   the Windows column is honestly ⚠️ (compile-verified, never run on real
   hardware). Remaining gate: live verification on rostad's Windows box.
 
+## 2026-11-22 (wake 6) — recordings play in-app (player + tile marks)
+
+- rostad: clicking a recording in Recent opened another program; he wants the length in the
+  thumbnail, a red dot for recordings, and a play button + a real player with a draggable
+  timeline inside SnagCraft.
+- Backend (`commands.rs`): `FolderMedia.durationMs` + new `RecordingMeta` (`recording_meta`
+  replaces `recording_thumb` for the in-session path); `probe_duration_ms` = ffprobe, with
+  ffmpeg's `Duration:` banner as fallback (pure `parse_timecode` / `duration_from_ffmpeg_banner`,
+  unit-tested); `recording_frame(path, ms, maxWidth)` for the scrub fallback; `fill_durations`
+  probes four clips at a time so a 60-file folder doesn't stall the strip. `protocol-asset`
+  enabled (`Cargo.toml` feature + `tauri.conf.json` assetProtocol) so the webview can point a
+  `<video>` at the file via `convertFileSrc`.
+- UI (`app.ts`, `style.css`): new `.player` pane in the stage (editor hidden, document kept),
+  center play button, transport bar (play/pause, clock, `input[type=range]` scrubber with a
+  filled track, total, mute, open-external, close), Space/←/→/Shift/Esc keys. Recent tiles get
+  `.film-rec` (red dot) and `.film-dur` (`7s` / `1:23`); `loadRecent` no longer calls `open_path`
+  for videos.
+- Verified: `cargo test --lib` 108/108 (new: banner parsing, camelCase serialisation, video-only
+  probing, real 2 s clip → 2000 ms and a 160 px frame), fmt + clippy `-D warnings`, `tsc`,
+  `pnpm build`. Real UI driven in a browser against a mocked IPC bridge: 3 tiles with 2 dots and
+  `9s`/`7s`, click → player opens (video src via convertFileSrc), transport bar laid out
+  correctly (vision-checked), Esc closes and restores the editor, and the 2.5 s watchdog +
+  `error` handler fall back to frame mode where the engine has no media pipeline.
+- **Not verified here:** actual `<video>` playback in WebKitGTK. pn53's headless Chromium has
+  no media pipeline (a plain `<video src>` never leaves `networkState=NO_SOURCE`) and
+  WebKitGTK under Xvfb paints a blank pixmap, so the decode path needs rostad's KDE box
+  (gst VP9 present locally; H.264 needs `gst-libav` — without it the frame fallback takes over).
+
 ## 2026-11-22 — v1.5.4 published (the polish round's release)
 
 - rostad asked to put today's version on GitHub. Bumped 1.5.3 → 1.5.4 in

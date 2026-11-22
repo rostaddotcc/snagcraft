@@ -340,6 +340,7 @@ pub async fn copy_png(data_url: String) -> Result<(), String> {
 
 /// One file in the save folder, shaped for the Recent strip.
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FolderMedia {
     /// Absolute path — what the frontend hands back to open it.
     pub path: String,
@@ -351,6 +352,19 @@ pub struct FolderMedia {
     pub modified: u64,
     /// Small PNG data URL, or empty when no thumbnail could be built.
     pub thumb: String,
+    /// Clip length in milliseconds for videos (`None` when unreadable).
+    pub duration_ms: Option<u64>,
+}
+
+/// A finished recording as the Recent strip needs it: a preview frame and the
+/// clip length. Both are best-effort — a missing ffmpeg yields empty/None.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingMeta {
+    /// PNG data URL of one frame, or empty when no thumbnail could be built.
+    pub thumb: String,
+    /// Clip length in milliseconds, `None` when it can't be probed.
+    pub duration_ms: Option<u64>,
 }
 
 /// Image extensions the strip can show, and the ones it treats as video.
@@ -452,14 +466,18 @@ pub async fn list_folder_media(dir: String) -> Result<Vec<FolderMedia>, String> 
         } else {
             image_thumb(&path).unwrap_or_default()
         };
+        // Length goes in the tile overlay; it is filled in below, four files at
+        // a time, because one ffprobe per clip adds up on a big folder.
         out.push(FolderMedia {
             path: path.to_string_lossy().into_owned(),
             name,
             kind: if is_video { "video" } else { "image" }.to_string(),
             modified,
             thumb,
+            duration_ms: None,
         });
     }
+    fill_durations(&mut out);
     Ok(out)
 }
 
@@ -567,8 +585,7 @@ pub fn open_path(path: String) -> Result<(), String> {
 }
 
 /// One frame from a recording as a PNG data URL, for the recent filmstrip.
-#[tauri::command]
-pub fn recording_thumb(path: String) -> Result<String, String> {
+pub(crate) fn recording_thumb(path: String) -> Result<String, String> {
     use std::process::{Command, Stdio};
 
     let p = std::path::PathBuf::from(&path);
@@ -595,6 +612,187 @@ pub fn recording_thumb(path: String) -> Result<String, String> {
     if !out.status.success() || out.stdout.is_empty() {
         return Err(format!(
             "ffmpeg could not read {}: {}",
+            p.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&out.stdout);
+    Ok(format!("data:image/png;base64,{b64}"))
+}
+
+/// Fill in every video's length, probing a few files at a time.
+///
+/// One ffprobe spawn per clip is cheap (tens of ms) but 60 in a row are not —
+/// and the save folder may sit on a network drive, so the strip waits for it.
+/// Four workers keep a big folder coming back in one breath.
+fn fill_durations(items: &mut [FolderMedia]) {
+    let videos: Vec<(usize, std::path::PathBuf)> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.kind == "video")
+        .map(|(index, item)| (index, std::path::PathBuf::from(&item.path)))
+        .collect();
+    if videos.is_empty() {
+        return;
+    }
+    let workers = videos.len().min(4);
+    let chunk = videos.len().div_ceil(workers);
+    let mut probed: Vec<(usize, Option<u64>)> = Vec::with_capacity(videos.len());
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = videos
+            .chunks(chunk)
+            .map(|slice| {
+                scope.spawn(move || {
+                    slice
+                        .iter()
+                        .map(|(index, path)| (*index, probe_duration_ms(path)))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        for handle in handles {
+            if let Ok(results) = handle.join() {
+                probed.extend(results);
+            }
+        }
+    });
+    for (index, duration) in probed {
+        if let Some(item) = items.get_mut(index) {
+            item.duration_ms = duration;
+        }
+    }
+}
+
+/// Preview frame + length for a freshly finished recording.
+///
+/// The in-session path can't go through `list_folder_media` (auto-save may be
+/// off and the file may be anywhere), so it asks for both facts directly.
+#[tauri::command]
+pub fn recording_meta(path: String) -> RecordingMeta {
+    let p = std::path::PathBuf::from(path.trim());
+    let thumb = if p.is_file() {
+        recording_thumb(p.to_string_lossy().into_owned()).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let duration_ms = if p.is_file() {
+        probe_duration_ms(&p)
+    } else {
+        None
+    };
+    RecordingMeta { thumb, duration_ms }
+}
+
+/// Parse an ffmpeg-style `HH:MM:SS.mmm` stamp into milliseconds.
+///
+/// Pure so the fallback parser is testable without a binary on the machine.
+fn parse_timecode(stamp: &str) -> Option<u64> {
+    let mut parts = stamp.trim().split(':');
+    let hours: f64 = parts.next()?.parse().ok()?;
+    let minutes: f64 = parts.next()?.parse().ok()?;
+    let seconds: f64 = parts.next()?.parse().ok()?;
+    let total = hours * 3600.0 + minutes * 60.0 + seconds;
+    if total.is_finite() && total > 0.0 {
+        Some((total * 1000.0).round() as u64)
+    } else {
+        None
+    }
+}
+
+/// Pull the length out of ffmpeg's banner (`Duration: 00:00:07.03, start: …`).
+fn duration_from_ffmpeg_banner(text: &str) -> Option<u64> {
+    let marker = "Duration: ";
+    let start = text.find(marker)? + marker.len();
+    let rest = &text[start..];
+    let end = rest.find(',').unwrap_or(rest.len());
+    // `Duration: N/A, start: …` is what a half-written file reports.
+    parse_timecode(&rest[..end])
+}
+
+/// Clip length in milliseconds: ffprobe first (fast, exact), ffmpeg's banner
+/// as the fallback for machines that only ship the encoder binary.
+pub(crate) fn probe_duration_ms(path: &std::path::Path) -> Option<u64> {
+    use std::process::{Command, Stdio};
+
+    if let Ok(out) = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .stdin(Stdio::null())
+        .output()
+    {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            if let Ok(seconds) = text.trim().parse::<f64>() {
+                if seconds.is_finite() && seconds > 0.0 {
+                    return Some((seconds * 1000.0).round() as u64);
+                }
+            }
+        }
+    }
+
+    let out = Command::new("ffmpeg")
+        .args(["-hide_banner", "-i"])
+        .arg(path)
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .output()
+        .ok()?;
+    duration_from_ffmpeg_banner(&String::from_utf8_lossy(&out.stderr))
+}
+
+/// One frame at `ms` as a PNG data URL — the frame-scrub fallback for systems
+/// whose webview has no video decoder for the clip's codec.
+///
+/// `max_width` keeps the payload sane on a 4K recording (aspect is preserved).
+#[tauri::command]
+pub fn recording_frame(path: String, ms: u64, max_width: Option<u32>) -> Result<String, String> {
+    use std::process::{Command, Stdio};
+
+    let p = std::path::PathBuf::from(path.trim());
+    if !p.is_file() {
+        return Err(format!("{} does not exist", p.display()));
+    }
+    let width = max_width.unwrap_or(1280).clamp(160, 4096);
+    // Fast seek before -i: keyframe-accurate is plenty for a scrub preview.
+    let seek = format!("{:.3}", ms as f64 / 1000.0);
+    let scale = format!("scale=w='min(iw,{width})':h=-1");
+    let out = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            &seek,
+            "-i",
+        ])
+        .arg(&p)
+        .args([
+            "-frames:v",
+            "1",
+            "-vf",
+            &scale,
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "png",
+            "-",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("ffmpeg failed: {e}"))?;
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(format!(
+            "ffmpeg could not read {} at {seek}s: {}",
             p.display(),
             String::from_utf8_lossy(&out.stderr).trim()
         ));
@@ -703,5 +901,129 @@ mod folder_media_tests {
     fn a_missing_folder_is_not_an_error() {
         // The command returns an empty list for a folder that isn't there yet.
         assert!(scan_media(std::path::Path::new("/nonexistent/snagcraft/nope")).is_err());
+    }
+
+    #[test]
+    fn ffmpeg_banner_duration_becomes_milliseconds() {
+        let banner = "  Duration: 00:00:07.03, start: 0.000000, bitrate: 812 kb/s\n";
+        assert_eq!(duration_from_ffmpeg_banner(banner), Some(7_030));
+        let longer = "  Duration: 00:02:41.50, start: 0.000000, bitrate: 2 kb/s\n";
+        assert_eq!(duration_from_ffmpeg_banner(longer), Some(161_500));
+        // A half-written clip reports N/A — that is "unknown", not zero.
+        assert_eq!(
+            duration_from_ffmpeg_banner("  Duration: N/A, start: 0.000000, bitrate: N/A\n"),
+            None
+        );
+        assert_eq!(duration_from_ffmpeg_banner("no length line here"), None);
+    }
+
+    #[test]
+    fn folder_media_serializes_camel_case_duration() {
+        let value = serde_json::to_value(FolderMedia {
+            path: "/tmp/a.mp4".into(),
+            name: "a.mp4".into(),
+            kind: "video".into(),
+            modified: 0,
+            thumb: String::new(),
+            duration_ms: Some(1234),
+        })
+        .expect("serialize FolderMedia");
+        assert_eq!(value["durationMs"], 1234);
+        assert_eq!(value["kind"], "video");
+
+        let meta = serde_json::to_value(RecordingMeta {
+            thumb: "data:image/png;base64,AA".into(),
+            duration_ms: None,
+        })
+        .expect("serialize RecordingMeta");
+        assert!(meta["durationMs"].is_null());
+    }
+
+    fn video_item(path: &std::path::Path) -> FolderMedia {
+        FolderMedia {
+            path: path.to_string_lossy().into_owned(),
+            name: "clip.mp4".into(),
+            kind: "video".into(),
+            modified: 0,
+            thumb: String::new(),
+            duration_ms: None,
+        }
+    }
+
+    #[test]
+    fn durations_are_only_probed_for_videos() {
+        let mut items = vec![
+            FolderMedia {
+                path: "/nonexistent/snagcraft/image.png".into(),
+                name: "image.png".into(),
+                kind: "image".into(),
+                modified: 0,
+                thumb: String::new(),
+                duration_ms: None,
+            },
+            video_item(std::path::Path::new("/nonexistent/snagcraft/clip.mp4")),
+        ];
+        fill_durations(&mut items);
+        assert!(items[0].duration_ms.is_none(), "images are never probed");
+        assert!(
+            items[1].duration_ms.is_none(),
+            "a missing clip has no length"
+        );
+    }
+
+    /// ffmpeg is optional on a dev machine — skip instead of failing.
+    fn make_clip(dir: &std::path::Path, seconds: u32) -> Option<std::path::PathBuf> {
+        let clip = dir.join("clip.mp4");
+        let status = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=320x240:rate=10",
+                "-t",
+                &seconds.to_string(),
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(&clip)
+            .status()
+            .ok()?;
+        status.success().then_some(clip)
+    }
+
+    #[test]
+    fn a_real_clip_reports_its_length_and_a_frame() {
+        let dir = std::env::temp_dir().join(format!("snagcraft-media-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let Some(clip) = make_clip(&dir, 2) else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
+
+        let ms = probe_duration_ms(&clip).expect("duration");
+        assert!((1800..=2200).contains(&ms), "≈2 s, got {ms} ms");
+
+        let mut items = vec![video_item(&clip)];
+        fill_durations(&mut items);
+        assert_eq!(items[0].duration_ms, Some(ms));
+
+        // The scrub fallback downscales through ffmpeg's filter parser — the
+        // quoted min() expression must survive Command::arg untouched.
+        let frame = recording_frame(clip.to_string_lossy().into_owned(), 1000, Some(160))
+            .expect("frame at 1 s");
+        let png = crate::capture::decode_png_data_url(&frame).expect("decodes");
+        let image = image::load_from_memory(&png).expect("valid png");
+        assert_eq!(image.width(), 160, "max_width honoured (320px source)");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
