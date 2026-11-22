@@ -242,8 +242,11 @@ pub async fn capture_window() -> anyhow::Result<(String, u32, u32)> {
 /// reached anyway.
 #[cfg(not(target_os = "linux"))]
 pub async fn capture_monitor() -> anyhow::Result<(String, u32, u32)> {
-    let monitors = xcap::Monitor::all()?;
-    match monitors.len() {
+    // Count and DROP the monitor list before any await: xcap's Windows Monitor
+    // holds a raw HMONITOR (`*mut c_void`), so keeping it across an await makes
+    // the whole Tauri command future non-Send.
+    let count = xcap::Monitor::all()?.len();
+    match count {
         0 => anyhow::bail!("no monitors reported by the display server"),
         1 => capture_monitor_index(0).await,
         n => anyhow::bail!("{n} monitors connected — pick one in the screen chooser"),
