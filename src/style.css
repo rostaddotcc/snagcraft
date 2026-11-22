@@ -3524,8 +3524,8 @@ kbd {
   position: absolute;
   top: 4px;
   left: 4px;
-  width: 7px;
-  height: 7px;
+  width: clamp(7px, calc(var(--film-thumb-h, 48px) * 0.15), 16px);
+  height: clamp(7px, calc(var(--film-thumb-h, 48px) * 0.15), 16px);
   border-radius: 999px;
   background: var(--rec);
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
@@ -3539,11 +3539,11 @@ kbd {
   border-radius: 4px;
   background: rgba(12, 14, 17, 0.78);
   color: #fff;
-  font-size: 9.5px;
+  font-size: clamp(9.5px, calc(var(--film-thumb-h, 48px) * 0.2), 16px);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
-  line-height: 14px;
+  line-height: 1.5;
 }
 
 /* ------------------------------------------------------ recording player */
