@@ -1852,6 +1852,30 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   CI run 45011161975 = the Windows compile proof. Runtime behaviour needs
   rostad's Windows box (PrintScreen may be pre-held by Snipping Tool/OneDrive
   — the honest per-combo granted list covers that).
+- **CI run 45011161975 GREEN (wake 5):** hotkeys compile + bundle on Windows;
+  README hotkeys row flipped 🔜 → ⚠️ native, feature bullet updated.
+
+## 2026-11-22 (wake 5) — scrolling capture on Windows/macOS
+
+- Last 🔜 in the README platforms table, closed in code: non-Linux `imp`
+  module in scrolling/mod.rs — pick_monitor (largest-overlap monitor, region
+  clamped + translated to monitor-relative physical px), probe grab before
+  claiming the slot, then capture_region polling at POLL_INTERVAL in the
+  stitcher thread.
+- Stop rules deliberately MIRROR the Linux loop (idle-stop 2.5 s, double
+  NoChange, LowConfidence warn, MAX_HEIGHT cap). "Screen unchanged" =
+  byte-equality vs the previous grab (Linux uses buffer identity on the
+  portal slot — same semantics, different mechanism).
+- Shared helpers hoisted to the parent: `rgba_to_rgb24` (+ cross-platform
+  unit test) and `emit_status` (both loops emit identical scrolling-status
+  events). Linux imp mechanically switched to emit_status — compiled + tested
+  on Linux (104/104).
+- Monitor non-Send trap respected: probe in its own scope, thread re-finds
+  the monitor by id, nothing xcap-held crosses an await.
+- Frontend needed ZERO changes (the scrolling flow/HUD is event-driven and
+  platform-neutral; the old NOT_SUPPORTED bail just surfaced as an error).
+- Gates: fmt/clippy/104 tests clean; CI run 45012641849 = Windows compile
+  proof. Live Windows scrolling needs rostad's hardware.
 
 ## Appendix — measured reality
 
