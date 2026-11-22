@@ -1824,6 +1824,13 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
 - Gates: fmt/clippy -D/100 tests/tsc clean locally; CI run 45009030210
   (windows job = the only real compile proof). Live Windows behaviour still
   unverified — needs rostad's hardware.
+- **CI run 45009030210 GREEN (wake 3):** quality + linux + windows success,
+  release skipped (dispatch run). Both wake-1 fixes and the window chooser
+  compile + bundle on real Windows (NSIS + MSI).
+- Wake 3 cleanup: CONTRIBUTING.md + all issue forms lost the edition dropdowns
+  /rust links (one app); repo description updated (no "pure-Rust edition"),
+  `egui` topic removed. CHANGELOG/integrations mentions of "Rust" are the
+  legitimate Tauri-backend kind — kept.
 
 ## Appendix — measured reality
 
