@@ -12,6 +12,7 @@ jobs:
   # unit tests are clean.
   quality:
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
 
@@ -47,6 +48,7 @@ jobs:
   linux:
     needs: quality
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
 
@@ -95,6 +97,9 @@ jobs:
   windows:
     needs: quality
     runs-on: windows-latest
+    # The NSIS/WiX tooling download or a cargo step can hang on a bad runner —
+    # bound the job so a stall fails in 40 min instead of burning the 6 h max.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
 
@@ -128,6 +133,7 @@ jobs:
     needs: [linux, windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
