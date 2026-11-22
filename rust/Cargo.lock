@@ -4230,6 +4230,7 @@ dependencies = [
  "image",
  "serde_json",
  "snagcraft-automation",
+ "snagcraft-capture",
  "snagcraft-engine",
  "snagcraft-io",
  "snagcraft-platform",
