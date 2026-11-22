@@ -1832,6 +1832,27 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   `egui` topic removed. CHANGELOG/integrations mentions of "Rust" are the
   legitimate Tauri-backend kind — kept.
 
+## 2026-11-22 (wake 4) — native global hotkeys on Windows/macOS
+
+- README's Windows "Global hotkeys 🔜" closed in code: `tauri-plugin-global-shortcut`
+  registered on non-Linux ONLY (on Linux it is X11-only and broken under
+  Wayland — the GlobalShortcuts portal stays the sanctioned path).
+- `native_trigger()` translates internal/XDG spelling to the global-hotkey
+  parser form (PRINT→PrintScreen, RETURN→Enter, `<Control><Shift>p`→
+  Ctrl+Shift+P, modifier-only passes through unparsable = skipped honestly).
+  Parser verified against global-hotkey-0.8.0 source: accepts A-Z/0-9,
+  PRINTSCREEN (not PRINT), ENTER (not RETURN), modifiers before key only.
+- register_hotkeys binds each combo individually via on_shortcut (a combo
+  held by e.g. Windows Snipping Tool fails alone), emits the SAME
+  `hotkey-activated {id}` event as the portal path → zero frontend flow
+  changes; backend reports "native". unregister_hotkeys releases all.
+- Frontend: HotkeyBackend type + normalizeStatus + paintHotkeyHint + settings
+  badge ("System") and platform-neutral advice/status copy.
+- Gates: fmt/clippy/103 lib tests (3 new native_trigger)/tsc clean;
+  CI run 45011161975 = the Windows compile proof. Runtime behaviour needs
+  rostad's Windows box (PrintScreen may be pre-held by Snipping Tool/OneDrive
+  — the honest per-combo granted list covers that).
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |
