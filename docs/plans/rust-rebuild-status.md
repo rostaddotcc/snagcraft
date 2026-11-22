@@ -1806,6 +1806,24 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
     Re-dispatched run 45007552512 covers both. Lesson: cfg(not(linux)) code is
     ONLY compile-checkable by the CI windows job (local cross-check dies in
     libwebp-sys; cfg(windows) modules never compile on Linux).
+  - Run 45007552512's windows job HUNG 60+ min (v1.5.3 reference: 7 min) —
+    cancelled; build.yml now bounds every job with timeout-minutes (1ef26ba).
+
+## 2026-11-22 (wake 2) — window capture chooser for Windows/macOS
+
+- `capture_window` on Win/mac no longer bails "not supported": new
+  `list_windows` (xcap Window::all, filtered: own pid, minimised, zero-sized,
+  untitled ghosts; Linux → [] so the portal flow is untouched) +
+  `capture_window_id` (same hide/settle/restore `grabbing` dance).
+- Frontend: the monitor modal became a generic capture-target chooser
+  (`pickCaptureTarget(heading, desc, items)`), reused by both picker modes;
+  window rows show title + app · W×H. Menu/MODES copy no longer promises a
+  "system dialog" on every platform.
+- No await inside capture_window_id — the non-Send xcap Window list must not
+  cross a suspension point (wake-1 lesson applied up front).
+- Gates: fmt/clippy -D/100 tests/tsc clean locally; CI run 45009030210
+  (windows job = the only real compile proof). Live Windows behaviour still
+  unverified — needs rostad's hardware.
 
 ## Appendix — measured reality
 
