@@ -1796,6 +1796,16 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
     --noEmit clean; Windows cross `cargo check --target x86_64-pc-windows-msvc`
     + CI windows job = compile proof only, real multi-monitor behaviour needs a
     Windows host (rostad) — never claim more than that.
+  - **Windows CI round 1 FAILED (workflow_dispatch run 45006215636):**
+    "future cannot be sent between threads safely" — xcap's Windows Monitor
+    holds a raw HMONITOR (`*mut c_void`), and capture_monitor kept the
+    `Vec<Monitor>` alive across `capture_monitor_index(0).await` → non-Send
+    Tauri command future. Fixed by counting + dropping before the await
+    (581fa0c). Also removed the CI-flagged unused `tauri::Emitter` import in
+    recording's cfg(windows) mod (abbaeaf) — it resolves via `use super::*`.
+    Re-dispatched run 45007552512 covers both. Lesson: cfg(not(linux)) code is
+    ONLY compile-checkable by the CI windows job (local cross-check dies in
+    libwebp-sys; cfg(windows) modules never compile on Linux).
 
 ## Appendix — measured reality
 
