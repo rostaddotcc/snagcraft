@@ -42,6 +42,14 @@ type MonitorInfo = {
   scaleFactor: number;
   isPrimary: boolean;
 };
+/** One capturable window, as reported by the backend (Windows/macOS). */
+type WindowInfo = {
+  id: number;
+  appName: string;
+  title: string;
+  width: number;
+  height: number;
+};
 type StatusKind = "info" | "success" | "error" | "recording";
 type CaptureMode = "full" | "region" | "window" | "monitor" | "scrolling" | "interval";
 /** Recording modes: the whole screen via the OS picker, a dragged region, or one window. */
@@ -853,7 +861,7 @@ export function mountApp(root: HTMLElement): void {
               <span class="menu-check">${ICONS.check}</span>
               <span class="menu-keys"><kbd>Shift</kbd><kbd>PrintScreen</kbd></span>
             </button>
-            <button type="button" class="menu-item" role="menuitemradio" data-mode="window" aria-checked="false" title="Pick one window in the system dialog">
+            <button type="button" class="menu-item" role="menuitemradio" data-mode="window" aria-checked="false" title="Choose which window to capture">
               <span class="menu-icon">${ICONS.window}</span>
               <span class="menu-label">Window</span>
               <span class="menu-check">${ICONS.check}</span>
@@ -1202,7 +1210,7 @@ export function mountApp(root: HTMLElement): void {
         <header class="modal-head">
           <div class="modal-heading">
             <h2 class="modal-title" id="monitor-title">Choose a screen</h2>
-            <p class="modal-desc">Which display should SnagCraft capture?</p>
+            <p class="modal-desc" id="monitor-desc">Which display should SnagCraft capture?</p>
           </div>
           <button type="button" class="icon-btn modal-x" id="monitor-close" aria-label="Close" title="Close (Esc)">${ICONS.close}</button>
         </header>
@@ -2245,9 +2253,9 @@ export function mountApp(root: HTMLElement): void {
       },
       window: {
         short: "Window",
-        title: "Capture a window — pick one in the system dialog",
+        title: "Capture a window — pick one in the window chooser",
         aria: "Capture a window",
-        announce: "Capture mode: window — the system dialog asks which window to grab.",
+        announce: "Capture mode: window — a chooser asks which window to grab.",
       },
       monitor: {
         short: "Screen",
@@ -3072,17 +3080,26 @@ export function mountApp(root: HTMLElement): void {
     }
   }
 
+  /** One row in the capture-target chooser. */
+  type ChooserItem = { name: string; meta: string };
+
   /**
-   * In-app screen chooser for Windows/macOS (issue #1): no portal picker
-   * exists there, so the monitors from `list_monitors` are offered as buttons.
-   * Resolves the chosen index, or null when cancelled.
+   * In-app capture-target chooser for Windows/macOS (issue #1): no OS portal
+   * picker exists there, so screens or windows from the backend are offered
+   * as buttons. Resolves the chosen index, or null when cancelled.
    */
-  function pickMonitor(monitors: MonitorInfo[]): Promise<number | null> {
+  function pickCaptureTarget(
+    heading: string,
+    description: string,
+    items: ChooserItem[],
+  ): Promise<number | null> {
     return new Promise<number | null>((resolve) => {
       const backdrop = $<HTMLDivElement>("#monitor-modal");
       const listEl = $<HTMLDivElement>("#monitor-list");
       const cancelBtn = $<HTMLButtonElement>("#monitor-cancel");
       const closeBtn = $<HTMLButtonElement>("#monitor-close");
+      $<HTMLElement>("#monitor-title").textContent = heading;
+      $<HTMLElement>("#monitor-desc").textContent = description;
       let settled = false;
 
       const onKey = (ev: KeyboardEvent): void => {
@@ -3110,21 +3127,16 @@ export function mountApp(root: HTMLElement): void {
       }
 
       listEl.replaceChildren();
-      monitors.forEach((monitor, index) => {
+      items.forEach((item, index) => {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "monitor-item";
         const name = document.createElement("span");
         name.className = "monitor-name";
-        name.textContent = monitor.name || `Display ${index + 1}`;
+        name.textContent = item.name;
         const meta = document.createElement("span");
         meta.className = "monitor-meta";
-        const scale =
-          monitor.scaleFactor > 0 && monitor.scaleFactor !== 1
-            ? ` · ${Math.round(monitor.scaleFactor * 100)}%`
-            : "";
-        const primary = monitor.isPrimary ? " · primary" : "";
-        meta.textContent = `${monitor.width} × ${monitor.height}${scale}${primary}`;
+        meta.textContent = item.meta;
         btn.append(name, meta);
         btn.addEventListener("click", () => finish(index));
         listEl.appendChild(btn);
@@ -3144,27 +3156,59 @@ export function mountApp(root: HTMLElement): void {
   /**
    * Window / monitor capture: on Linux the OS portal shows its own picker, so
    * the only things we own are the waiting status, the load and the auto-save.
-   * On Windows/macOS the monitor list comes from the backend and the chooser
+   * On Windows/macOS the target list comes from the backend and the chooser
    * above replaces the missing OS dialog.
    */
   async function runPickerCapture(kind: PickerMode): Promise<void> {
     let command = kind === "window" ? "capture_window" : "capture_monitor";
-    let args: { index?: number } | undefined;
+    let args: { index?: number; id?: number } | undefined;
     const what = kind === "window" ? "window" : "screen";
+    // Linux returns empty lists (the portal is the picker there); only a real
+    // Windows/macOS enumeration opens the in-app chooser.
     if (kind === "monitor") {
-      // Linux returns an empty list (the portal is the picker there); only a
-      // genuine multi-monitor Windows/macOS setup opens the in-app chooser.
       const monitors = await invoke<MonitorInfo[]>("list_monitors").catch(
         () => [] as MonitorInfo[],
       );
       if (monitors.length > 1) {
-        const index = await pickMonitor(monitors);
+        const index = await pickCaptureTarget(
+          "Choose a screen",
+          "Which display should SnagCraft capture?",
+          monitors.map((monitor, i) => {
+            const scale =
+              monitor.scaleFactor > 0 && monitor.scaleFactor !== 1
+                ? ` · ${Math.round(monitor.scaleFactor * 100)}%`
+                : "";
+            const primary = monitor.isPrimary ? " · primary" : "";
+            return {
+              name: monitor.name || `Display ${i + 1}`,
+              meta: `${monitor.width} × ${monitor.height}${scale}${primary}`,
+            };
+          }),
+        );
         if (index === null) {
           setStatus("Capture cancelled");
           return;
         }
         command = "capture_monitor_index";
         args = { index };
+      }
+    } else {
+      const windows = await invoke<WindowInfo[]>("list_windows").catch(() => [] as WindowInfo[]);
+      if (windows.length > 0) {
+        const index = await pickCaptureTarget(
+          "Choose a window",
+          "Which window should SnagCraft capture?",
+          windows.map((win) => ({
+            name: win.title || win.appName || "Untitled window",
+            meta: `${win.appName || "Unknown app"} · ${win.width} × ${win.height}`,
+          })),
+        );
+        if (index === null) {
+          setStatus("Capture cancelled");
+          return;
+        }
+        command = "capture_window_id";
+        args = { id: windows[index].id };
       }
     }
     let res: CaptureResult;

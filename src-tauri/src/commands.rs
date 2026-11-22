@@ -136,6 +136,22 @@ pub async fn capture_monitor_index(
     grabbing(app, move || crate::capture::capture_monitor_index(index)).await
 }
 
+/// List capturable windows for the in-app window chooser.
+///
+/// Linux returns an empty list — there the ScreenCast portal owns the picking.
+#[tauri::command]
+pub async fn list_windows() -> Result<Vec<crate::capture::WindowInfo>, String> {
+    crate::capture::list_windows()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Grab one window by its `list_windows` id (Windows/macOS).
+#[tauri::command]
+pub async fn capture_window_id(app: tauri::AppHandle, id: u32) -> Result<CaptureResult, String> {
+    grabbing(app, move || crate::capture::capture_window_id(id)).await
+}
+
 /// Hide the main window, run `grab`, restore the window, then map the result.
 ///
 /// Restore happens before the error is returned, so a failed or cancelled grab

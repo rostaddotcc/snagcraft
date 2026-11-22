@@ -173,6 +173,90 @@ pub async fn capture_monitor_index(_index: usize) -> anyhow::Result<(String, u32
     )
 }
 
+/// Metadata for one capturable window (Windows/macOS window chooser).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowInfo {
+    pub id: u32,
+    pub app_name: String,
+    pub title: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// List capturable windows.
+///
+/// Linux returns an EMPTY list by design — the ScreenCast portal owns window
+/// picking there. Windows/macOS get every visible window except our own.
+#[cfg(target_os = "linux")]
+pub async fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
+    Ok(Vec::new())
+}
+
+/// Windows/macOS window enumeration through xcap.
+///
+/// Filtered: our own process (the picker would list the app itself), minimised
+/// windows (stale or failed grabs), and zero-sized/untitled ghost entries the
+/// OS keeps for shells and tooling.
+#[cfg(not(target_os = "linux"))]
+pub async fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
+    let mut out = Vec::new();
+    let own_pid = std::process::id();
+    for window in xcap::Window::all()? {
+        if window.pid().unwrap_or(0) == own_pid {
+            continue;
+        }
+        if window.is_minimized().unwrap_or(false) {
+            continue;
+        }
+        let (width, height) = (window.width().unwrap_or(0), window.height().unwrap_or(0));
+        if width == 0 || height == 0 {
+            continue;
+        }
+        let title = window.title().unwrap_or_default();
+        let app_name = window.app_name().unwrap_or_default();
+        if title.trim().is_empty() && app_name.trim().is_empty() {
+            continue;
+        }
+        out.push(WindowInfo {
+            id: window.id()?,
+            app_name,
+            title,
+            width,
+            height,
+        });
+    }
+    Ok(out)
+}
+
+/// Capture one window by its [`list_windows`] id (Windows/macOS).
+#[cfg(not(target_os = "linux"))]
+pub async fn capture_window_id(id: u32) -> anyhow::Result<(String, u32, u32)> {
+    // No await inside this fn: the non-Send xcap Window list must not live
+    // across a suspension point (same trap as capture_monitor).
+    let Some(window) = xcap::Window::all()?
+        .into_iter()
+        .find(|w| w.id().is_ok_and(|wid| wid == id))
+    else {
+        anyhow::bail!("window {id} is gone — it may have been closed");
+    };
+    let rgba = window.capture_image()?;
+    let mut png = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut png);
+    image::DynamicImage::ImageRgba8(rgba)
+        .write_to(&mut cursor, image::ImageFormat::Png)
+        .map_err(|e| anyhow::anyhow!("failed to encode screenshot as PNG: {e}"))?;
+    png_bytes_to_data_url(&png)
+}
+
+/// Linux picks windows in the portal dialog, never by id.
+#[cfg(target_os = "linux")]
+pub async fn capture_window_id(_id: u32) -> anyhow::Result<(String, u32, u32)> {
+    anyhow::bail!(
+        "window capture by id is not used on Linux — the portal picker selects the window"
+    )
+}
+
 /// One user-picked window, grabbed as a single frame (Wave 10).
 ///
 /// The *Screenshot* portal can only grab whole screens, so this goes through the
@@ -229,11 +313,12 @@ pub fn rgb24_to_data_url(
     png_bytes_to_data_url(&png)
 }
 
-/// Window capture is portal-based, so non-Linux builds report the same honest
-/// "not here yet" error as the recording backend instead of pretending.
+/// Window capture on Windows/macOS goes through the in-app chooser: the
+/// frontend lists [`list_windows`] and calls [`capture_window_id`]. This
+/// fallback stays honest if it is reached anyway.
 #[cfg(not(target_os = "linux"))]
 pub async fn capture_window() -> anyhow::Result<(String, u32, u32)> {
-    anyhow::bail!("window capture is not supported on this platform yet")
+    anyhow::bail!("pick a window in the window chooser")
 }
 
 /// One monitor on Windows/macOS: a lone display is grabbed directly; with

@@ -62,6 +62,9 @@ pub fn run() {
             // Multi-monitor on Windows/macOS: in-app screen chooser (issue #1)
             commands::list_monitors,
             commands::capture_monitor_index,
+            // Window capture on Windows/macOS: in-app window chooser
+            commands::list_windows,
+            commands::capture_window_id,
             commands::save_png,
             commands::copy_png,
             commands::copy_text,
