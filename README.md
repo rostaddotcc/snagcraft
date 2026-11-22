@@ -2,7 +2,6 @@
 
 [![Release](https://img.shields.io/github/v/release/rostaddotcc/snagcraft)](https://github.com/rostaddotcc/snagcraft/releases/latest)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
-[![Rust CI](https://github.com/rostaddotcc/snagcraft/actions/workflows/rust.yml/badge.svg)](https://github.com/rostaddotcc/snagcraft/actions/workflows/rust.yml)
 
 **Open-source Snagit-style screen capture & annotation.** Screenshot, mark up,
 record — without the subscription. Capture → annotate → share in under ten seconds.
@@ -13,27 +12,20 @@ Bugs, ideas and test reports are welcome — from **humans and AI agents alike**
 See [Reporting bugs & requesting features](#-bugs-ideas--feedback) for how we like
 them served.
 
-## Two editions — please say which one you're using
+## The app
 
-| | **Stable — v1.5.x** | **Rust edition — 0.1.0 pre-release** |
-|---|---|---|
-| Download | [Latest release](https://github.com/rostaddotcc/snagcraft/releases/latest) | [rust-v0.1.0](https://github.com/rostaddotcc/snagcraft/releases/tag/rust-v0.1.0) |
-| Stack | Tauri 2 (Rust backend + web frontend) | Pure Rust — egui/eframe on wgpu, no webview |
-| Status | The shipped, tested channel | Feature-parity rewrite, published for testing |
-| Extras | — | Headless CLI, TCP control channel + **MCP server** (46 commands), WASM web build |
-| Source | repo root (`src/`, `src-tauri/`) | [`rust/`](rust/README.md) |
-
-Both editions ship the same capture → annotate → share workflow. The Tauri line
-remains **stable** until an explicit cutover; the Rust edition is where new
-architecture work lands. **Every bug report should name its edition** — the two
-codebases are different, and a report without one costs a round-trip.
+| | |
+|---|---|
+| Download | [Latest release](https://github.com/rostaddotcc/snagcraft/releases/latest) |
+| Stack | Tauri 2 — Rust backend, web frontend (Vite + TS, Fabric.js editor) |
+| Source | repo root (`src/`, `src-tauri/`) |
 
 ## Install
 
-Grab an artifact from the release page of your edition:
+Grab an artifact from the [release page](https://github.com/rostaddotcc/snagcraft/releases/latest):
 
 ```bash
-# AppImage (portable, both editions)
+# AppImage (portable)
 chmod +x SnagCraft-*.AppImage && ./SnagCraft-*.AppImage
 
 # Debian/Ubuntu
@@ -109,11 +101,6 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 - Global hotkeys via the Wayland GlobalShortcuts portal (KDE)
 - Light / dark themes, and a "save before closing?" guard
 
-**Automation (Rust edition)**
-- One command registry, four surfaces: the egui app, a headless **CLI**, a **TCP JSON
-  control channel** and an **MCP server** — 46 commands, same semantics everywhere
-- A **WASM web build** runs the same engine in the browser
-
 ## Shortcuts
 
 | Key | Action |
@@ -130,7 +117,6 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 | `Ctrl` / `Cmd` + `S` | Save |
 | `Ctrl` / `Cmd` + `Shift` + `S` | Save As… |
 | `Ctrl` / `Cmd` + `,` | Settings |
-| `?` | Shortcuts overlay (Rust edition) |
 | `Delete` / `Backspace` | Delete the selected annotation |
 | `Esc` | Cancel / deselect / close |
 
@@ -148,13 +134,12 @@ receive them.
 2. **One issue per problem.** A report with three bugs gets triaged as zero.
 3. **Use the issue forms** — *New issue* → **Bug report**, **Feature request** or
    **Agent report**. They ask for exactly what we need.
-4. **Name the edition and version** — stable v1.5.x or Rust pre-release, plus the
-   release tag or About-box version.
+4. **Name the version** — the release tag you downloaded, or the About-box version.
 5. English is preferred; Swedish works too.
 
 ### What a good bug report contains
 
-- **Edition + exact version** (release tag you downloaded, or the About box)
+- **Exact version** (release tag you downloaded, or the About box)
 - **OS, desktop environment, session type** — Wayland or X11 matters a lot here
   (`echo $XDG_SESSION_TYPE`)
 - **Steps to reproduce** — numbered, from a fresh launch, minimal
@@ -176,7 +161,7 @@ Agent reports are first-class citizens. Use the **Agent report** form, or file v
 <model + harness, e.g. "Hermes Agent running <model>">
 
 ## Environment
-<edition + version · OS · desktop env · session type>
+<version · OS · desktop env · session type>
 <probe output: `uname -a`, `echo $XDG_SESSION_TYPE`, app version command>
 
 ## Task
@@ -213,8 +198,8 @@ Example:
 
 ```bash
 gh issue create --repo rostaddotcc/snagcraft \
-  --title "Region capture grabs the wrong monitor (Rust edition 0.1.0)" \
-  --label bug --label rust-edition --label agent-report \
+  --title "Region capture grabs the wrong monitor (v1.5.3)" \
+  --label bug --label agent-report \
   --body-file report.md
 ```
 
@@ -222,8 +207,8 @@ gh issue create --repo rostaddotcc/snagcraft \
 
 - SnagCraft is maintained by one person with agent help; issues are triaged in
   batches. Expect days, not hours — every report gets read, there is no SLA.
-- Labels you'll see: `bug`, `enhancement`, `agent-report`, `rust-edition`,
-  `stable-edition`, `needs-info`, `good first issue`.
+- Labels you'll see: `bug`, `enhancement`, `agent-report`, `needs-info`,
+  `good first issue`.
 - `needs-info` means the report is missing something to act on. Issues that stall
   without a repro may be closed — reopening with new evidence is always welcome.
 - Want to fix it yourself? See [CONTRIBUTING.md](CONTRIBUTING.md) — PRs welcome,
@@ -251,7 +236,7 @@ Please **don't** open public issues for vulnerabilities. Use
 > **Windows is compile-verified only.** The stable line's `.exe` is built by CI from
 > the same code but has not been run on real hardware — **Linux is the focus.**
 > Windows test reports are welcome (they're some of the most useful issues you can
-> file), but expect rough edges. The Rust edition currently ships Linux artifacts.
+> file), but expect rough edges.
 
 ## Recording troubleshooting
 
@@ -263,7 +248,7 @@ issue.
 
 ## Build from source
 
-**Stable line (Tauri):** Rust (stable), Node 20+, pnpm, and the
+Rust (stable), Node 20+, pnpm, and the
 [Tauri Linux deps](https://tauri.app/start/prerequisites/) (`libwebkit2gtk-4.1-dev`, …).
 
 ```bash
@@ -272,28 +257,14 @@ pnpm tauri dev      # run in development
 pnpm tauri build    # produce AppImage / deb / dmg / exe
 ```
 
-**Rust edition:** Rust (stable) only — no Node, no webview.
-
-```bash
-cd rust
-cargo run -p snagcraft            # native app
-cargo test --workspace --no-fail-fast
-cargo clippy --workspace          # deny-lints must stay clean
-cargo xtask layers                # enforce crate layering
-```
-
-See [`rust/README.md`](rust/README.md) for the CLI, automation channel, MCP server
-and WASM build.
-
 ## Project layout
 
 ```
-src/            stable frontend (Vite + TS, Fabric.js editor)
-src-tauri/      stable Rust backend (portal / xcap capture, clipboard, commands)
-rust/           Rust edition workspace (sans-I/O engine, egui UI, CLI, MCP, WASM)
+src/            frontend (Vite + TS, Fabric.js editor)
+src-tauri/      Rust backend (portal / xcap capture, clipboard, commands)
 integrations/   GNOME Shell & KDE Plasma 6 panel companions
 docs/specs/     design specs
-docs/plans/     implementation plans & parity tracking
+docs/plans/     implementation plans
 ```
 
 ## License
