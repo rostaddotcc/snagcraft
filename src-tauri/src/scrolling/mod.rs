@@ -660,10 +660,11 @@ mod imp {
 
         let thread = {
             let out = out.clone();
+            let stop = stop.clone();
             std::thread::Builder::new()
                 .name("snagcraft-scrolling-stitch".to_string())
                 .spawn(move || {
-                    let outcome = run(app, monitor_id, region, stop.clone());
+                    let outcome = run(app, monitor_id, region, stop);
                     if let Ok(mut slot) = out.lock() {
                         *slot = Some(outcome);
                     }
