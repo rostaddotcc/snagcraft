@@ -41,6 +41,9 @@ pipewire = { version = "0.10", features = ["v0_3_34"] }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 xcap = "0.9"
+# Native global hotkeys on Windows/macOS (RegisterHotKey / Carbon). Linux uses
+# the GlobalShortcuts portal instead — this plugin is X11-only there.
+tauri-plugin-global-shortcut = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

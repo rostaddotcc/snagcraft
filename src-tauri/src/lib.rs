@@ -23,7 +23,16 @@ pub fn run() {
     if cli::early_exit(&args) {
         return;
     }
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+    // Native global hotkeys on Windows/macOS (RegisterHotKey / Carbon). Linux
+    // uses the GlobalShortcuts portal instead — the plugin is X11-only there,
+    // so it is registered on non-Linux platforms only (see `hotkeys.rs`).
+    #[cfg(not(target_os = "linux"))]
+    {
+        builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    }
+    builder
         // System-application behaviour: a second launch (hotkey companion,
         // `snagcraft --capture`, "Open with" on an image) focuses the running
         // window and forwards the request instead of opening a new instance.

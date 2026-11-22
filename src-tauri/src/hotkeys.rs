@@ -1,8 +1,13 @@
-//! Global hotkeys on Wayland through `org.freedesktop.portal.GlobalShortcuts`.
+//! Global hotkeys.
 //!
-//! Why not `tauri-plugin-global-shortcut`: it wraps `global-hotkey`, which is
-//! **X11-only on Linux** — under a KDE Wayland session there is no root window
-//! to grab, so registration either fails or silently never fires.
+//! Linux (Wayland): `org.freedesktop.portal.GlobalShortcuts`.
+//! Why not `tauri-plugin-global-shortcut` there: it wraps `global-hotkey`,
+//! which is **X11-only on Linux** — under a KDE Wayland session there is no
+//! root window to grab, so registration either fails or silently never fires.
+//!
+//! Windows/macOS: `tauri-plugin-global-shortcut` IS the sanctioned path
+//! (RegisterHotKey / Carbon event hotkeys); the plugin is registered in
+//! `lib.rs` on those platforms only and bound in `register_hotkeys` below.
 //!
 //! The portal is the only sanctioned path on Wayland: the *compositor* owns the
 //! binding (KDE routes it through KGlobalAccel / System Settings → Shortcuts)
@@ -57,7 +62,8 @@ pub struct GrantedShortcut {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct HotkeyStatus {
-    /// `"portal"` (Wayland GlobalShortcuts) or `"none"` (nothing bound).
+    /// `"portal"` (Wayland GlobalShortcuts), `"native"` (Windows/macOS
+    /// global-shortcut plugin) or `"none"` (nothing bound).
     pub backend: String,
     pub granted: Vec<GrantedShortcut>,
 }
@@ -243,6 +249,121 @@ fn description_for(id: &str) -> String {
     }
 }
 
+/// One modifier token in the `global-hotkey` parser's spelling.
+/// Only called from the non-Linux bind path; kept cross-platform (lint
+/// silenced) so the `native_trigger` unit tests run everywhere.
+#[allow(dead_code)]
+fn native_mod(token: &str) -> Option<&'static str> {
+    match token.to_ascii_lowercase().as_str() {
+        "ctrl" | "control" | "ctl" => Some("Ctrl"),
+        "shift" => Some("Shift"),
+        "alt" | "option" | "opt" => Some("Alt"),
+        "super" | "meta" | "win" | "cmd" | "command" => Some("Super"),
+        "commandorcontrol" | "commandorctrl" | "cmdorctrl" | "cmdorcontrol" => {
+            Some("CommandOrControl")
+        }
+        _ => None,
+    }
+}
+
+/// One main-key token in the `global-hotkey` parser's spelling. It accepts
+/// e.g. `PRINTSCREEN` but NOT `PRINT`, `ENTER` but not `RETURN` — this is the
+/// translation layer from our internal/XDG-ish spelling.
+#[allow(dead_code)]
+fn native_key(token: &str) -> String {
+    if token.chars().count() == 1 {
+        return token.to_ascii_uppercase();
+    }
+    match token.to_ascii_lowercase().as_str() {
+        "print" | "printscreen" | "prtsc" => "PrintScreen".to_string(),
+        "esc" | "escape" => "Escape".to_string(),
+        "enter" | "return" => "Enter".to_string(),
+        "backspace" => "Backspace".to_string(),
+        "del" | "delete" => "Delete".to_string(),
+        "ins" | "insert" => "Insert".to_string(),
+        "pgup" | "pageup" => "PageUp".to_string(),
+        "pgdn" | "pagedown" => "PageDown".to_string(),
+        "space" => "Space".to_string(),
+        "tab" => "Tab".to_string(),
+        "home" => "Home".to_string(),
+        "end" => "End".to_string(),
+        "up" => "ArrowUp".to_string(),
+        "down" => "ArrowDown".to_string(),
+        "left" => "ArrowLeft".to_string(),
+        "right" => "ArrowRight".to_string(),
+        other => {
+            // `f5` → `F5`, unknown names get a canonical leading uppercase —
+            // the parser is the final judge (an unparsable combo is skipped).
+            let mut chars = other.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        }
+    }
+}
+
+/// Translate `"CTRL+SHIFT+P"` / `"Print"` / `"SHIFT+Print"` — or an XDG spec
+/// string like `"<Control><Shift>p"` — into the `global-hotkey` parser form
+/// (`"Ctrl+Shift+P"`, `"PrintScreen"`, `"Shift+PrintScreen"`).
+///
+/// Modifier-only or empty input is returned unchanged: it fails to parse and
+/// the bind step skips it honestly instead of binding "any key".
+#[allow(dead_code)]
+pub fn native_trigger(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let mut mods: Vec<&'static str> = Vec::new();
+    let mut key: Option<String> = None;
+
+    if trimmed.contains('<') {
+        // XDG spec form: leading `<Axis>` groups, then the key.
+        let mut rest = trimmed;
+        while let Some(stripped) = rest.strip_prefix('<') {
+            let Some(close) = stripped.find('>') else {
+                break;
+            };
+            let axis = &stripped[..close];
+            match native_mod(axis) {
+                Some(m) => mods.push(m),
+                None => break,
+            }
+            rest = &stripped[close + 1..];
+        }
+        let tail = rest.trim();
+        if !tail.is_empty() && !tail.contains('<') {
+            key = Some(native_key(tail));
+        }
+    } else {
+        for raw in trimmed.split('+') {
+            let token = raw.trim();
+            if token.is_empty() {
+                continue;
+            }
+            match native_mod(token) {
+                Some(m) => mods.push(m),
+                None => key = Some(native_key(token)),
+            }
+        }
+    }
+
+    match key {
+        None => trimmed.to_string(),
+        Some(key) => {
+            let mut out = String::new();
+            for m in mods {
+                out.push_str(m);
+                out.push('+');
+            }
+            out.push_str(&key);
+            out
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod portal {
     //! The Wayland/X11-portal backend.
@@ -414,10 +535,52 @@ pub async fn register_hotkeys(
 
     #[cfg(not(target_os = "linux"))]
     {
-        // X11 is handled by the same portal here; on Windows/macOS the
-        // platform hotkey backend is not wired up yet.
-        let _ = app;
-        Ok(state.set_status(HotkeyStatus::none()))
+        use tauri::Emitter as _;
+        use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+
+        let gs = app.global_shortcut();
+        // Clean rebind: previous registrations (and their handler-map entries)
+        // go first, then each requested combo is registered on its own — a
+        // combo another app already holds fails alone, never takes the rest.
+        let _ = gs.unregister_all();
+
+        let mut granted = Vec::new();
+        for def in &cleaned {
+            let trigger = native_trigger(&def.trigger);
+            let Ok(shortcut) = trigger.parse::<Shortcut>() else {
+                eprintln!(
+                    "snagcraft: cannot parse hotkey {:?} (→ {:?}) for native binding",
+                    def.trigger, trigger
+                );
+                continue;
+            };
+            let id = def.id.clone();
+            match gs.on_shortcut(shortcut, move |app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    if let Err(err) = app.emit("hotkey-activated", serde_json::json!({ "id": id }))
+                    {
+                        eprintln!("snagcraft: could not emit hotkey-activated: {err}");
+                    }
+                }
+            }) {
+                Ok(()) => granted.push(GrantedShortcut {
+                    id: def.id.clone(),
+                    trigger,
+                }),
+                Err(err) => eprintln!("snagcraft: could not bind {} ({}): {err}", def.id, trigger),
+            }
+        }
+
+        let status = if granted.is_empty() {
+            // Nothing bound (all combos taken/unparsable) — stay honest.
+            HotkeyStatus::none()
+        } else {
+            HotkeyStatus {
+                backend: "native".to_string(),
+                granted,
+            }
+        };
+        Ok(state.set_status(status))
     }
 }
 
@@ -427,12 +590,21 @@ pub fn get_hotkey_status(state: tauri::State<'_, HotkeyState>) -> HotkeyStatus {
     state.status()
 }
 
-/// Release every binding and close the portal session.
+/// Release every binding and close the portal session (Linux) or unregister
+/// every native shortcut (Windows/macOS).
 #[tauri::command]
 pub async fn unregister_hotkeys(
+    app: tauri::AppHandle,
     state: tauri::State<'_, HotkeyState>,
 ) -> Result<HotkeyStatus, String> {
     state.stop_task();
+    #[cfg(not(target_os = "linux"))]
+    {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        let _ = app.global_shortcut().unregister_all();
+    }
+    #[cfg(target_os = "linux")]
+    let _ = app;
     Ok(state.set_status(HotkeyStatus::none()))
 }
 
@@ -468,6 +640,33 @@ mod tests {
         // A config that is only modifiers must not bind "any key".
         assert_eq!(xdg_trigger("CTRL+SHIFT"), "CTRL+SHIFT");
         assert_eq!(xdg_trigger(""), "");
+    }
+
+    #[test]
+    fn native_trigger_maps_internal_form_to_plugin_form() {
+        assert_eq!(native_trigger("PRINT"), "PrintScreen");
+        assert_eq!(native_trigger("Print"), "PrintScreen");
+        assert_eq!(native_trigger("SHIFT+PRINT"), "Shift+PrintScreen");
+        assert_eq!(native_trigger("CTRL+SHIFT+P"), "Ctrl+Shift+P");
+        assert_eq!(native_trigger("ALT+F5"), "Alt+F5");
+        assert_eq!(native_trigger("ctrl+space"), "Ctrl+Space");
+        assert_eq!(native_trigger("WIN+D"), "Super+D");
+        assert_eq!(native_trigger("PGDN"), "PageDown");
+        assert_eq!(native_trigger("RETURN"), "Enter");
+    }
+
+    #[test]
+    fn native_trigger_converts_xdg_form() {
+        assert_eq!(native_trigger("<Control><Shift>p"), "Ctrl+Shift+P");
+        assert_eq!(native_trigger("<Super>Print"), "Super+PrintScreen");
+        assert_eq!(native_trigger("<Alt>F5"), "Alt+F5");
+    }
+
+    #[test]
+    fn native_trigger_refuses_modifier_only() {
+        // Unparsable by the plugin on purpose → the bind step skips it.
+        assert_eq!(native_trigger("CTRL+SHIFT"), "CTRL+SHIFT");
+        assert_eq!(native_trigger(""), "");
     }
 
     #[test]

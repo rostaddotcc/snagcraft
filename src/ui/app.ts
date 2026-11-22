@@ -1576,7 +1576,8 @@ export function mountApp(root: HTMLElement): void {
   /** Defensive read of the backend's status payload. */
   function normalizeStatus(raw: unknown): HotkeyStatus {
     const src = (raw ?? {}) as { backend?: unknown; granted?: unknown };
-    const backend: HotkeyBackend = src.backend === "portal" ? "portal" : "none";
+    const backend: HotkeyBackend =
+      src.backend === "portal" ? "portal" : src.backend === "native" ? "native" : "none";
     const granted = Array.isArray(src.granted)
       ? src.granted
           .map((entry) => entry as { id?: unknown; trigger?: unknown })
@@ -1606,13 +1607,14 @@ export function mountApp(root: HTMLElement): void {
         const granted = hotkeyStatus.granted.length;
         if (hotkeyStatus.backend === "none") {
           setStatus(
-            "Global hotkeys need the Wayland GlobalShortcuts portal (KDE) — see Settings → Global hotkeys.",
+            "No global-shortcut service accepted the bindings — see Settings → Global hotkeys.",
             "error",
           );
         } else if (granted === 0) {
-          setStatus("The desktop granted none of your shortcuts — try a different trigger.", "error");
+          setStatus("The system granted none of your shortcuts — try a different trigger.", "error");
         } else {
-          setStatus(`Hotkeys bound ${granted}/2 via the Wayland portal`, granted === 2 ? "success" : "info");
+          const via = hotkeyStatus.backend === "portal" ? "via the Wayland portal" : "natively";
+          setStatus(`Hotkeys bound ${granted}/2 ${via}`, granted === 2 ? "success" : "info");
         }
       }
     } catch (e) {
@@ -1631,9 +1633,13 @@ export function mountApp(root: HTMLElement): void {
       .map((cap) => `<kbd>${cap.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</kbd>`)
       .join("");
 
-  /** Top-bar hint: only claims a global shortcut when the desktop granted it. */
+  /** Top-bar hint: only claims a global shortcut when the system granted it. */
   function paintHotkeyHint(): void {
-    const live = settings.hotkeysEnabled && hotkeyStatus?.backend === "portal" ? hotkeyStatus : null;
+    const live =
+      settings.hotkeysEnabled &&
+      (hotkeyStatus?.backend === "portal" || hotkeyStatus?.backend === "native")
+        ? hotkeyStatus
+        : null;
     if (live && live.granted.length) {
       const full = live.granted.find((g) => g.id === "capture-full");
       const region = live.granted.find((g) => g.id === "capture-region");

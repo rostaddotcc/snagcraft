@@ -91,7 +91,7 @@ export const INTERVAL_CHOICES: ReadonlyArray<number> = [5, 10, 30, 60, 300];
 export type HotkeyId = "capture-full" | "capture-region";
 
 /** Which global-shortcut backend is actually live on this desktop. */
-export type HotkeyBackend = "portal" | "none";
+export type HotkeyBackend = "portal" | "native" | "none";
 
 export interface GrantedHotkey {
   id: string;
@@ -658,7 +658,8 @@ export class SettingsPanel {
     }
 
     const portal = status.backend === "portal";
-    el.dataset.state = portal ? "ok" : "warn";
+    const native = status.backend === "native";
+    el.dataset.state = portal || native ? "ok" : "warn";
 
     const actions: ReadonlyArray<{ id: HotkeyId; label: string; want: string }> = [
       { id: "capture-full", label: "Capture full screen", want: settings.hotkeyFull },
@@ -679,11 +680,13 @@ export class SettingsPanel {
 
     const backendLine = portal
       ? `<span class="hotkey-badge is-ok">Wayland portal</span><span class="hotkey-backend-text">org.freedesktop.portal.GlobalShortcuts — shortcuts stay active while any app is focused.</span>`
-      : `<span class="hotkey-badge is-warn">No backend</span><span class="hotkey-backend-text">No global-shortcut service answered this desktop.</span>`;
+      : native
+        ? `<span class="hotkey-badge is-ok">System</span><span class="hotkey-backend-text">Native global shortcuts — active while any app is focused.</span>`
+        : `<span class="hotkey-badge is-warn">No backend</span><span class="hotkey-backend-text">No global-shortcut service answered on this system.</span>`;
 
-    const advice = portal
+    const advice = portal || native
       ? ""
-      : `<p class="hotkey-note">Global hotkeys need the <strong>Wayland GlobalShortcuts portal</strong>, which KDE Plasma provides (GNOME 46 and older do not). SnagCraft cannot bind keys without it — keep using PrintScreen inside the window, or add a shortcut in your desktop settings that runs <code>snagcraft --capture</code>.</p>`;
+      : `<p class="hotkey-note">Global hotkeys need a system service that accepts the binding: on Linux the <strong>Wayland GlobalShortcuts portal</strong> (KDE Plasma provides it; GNOME 46 and older do not), on Windows/macOS the OS hotkey registry (another app may already hold the combo). Without it, keep using PrintScreen inside the window, or add a shortcut in your desktop settings that runs <code>snagcraft --capture</code>.</p>`;
 
     el.innerHTML = `
       <div class="hotkey-backend">${backendLine}</div>
