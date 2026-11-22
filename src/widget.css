@@ -3,9 +3,9 @@
 
      collapsed  → a 46x64 glass "flärp" — a vertical bookmark tab with the
                   unicorn mark and a breathing accent spine
-     expanded   → the 240x50 capture pill (grip + Full + Region + fold + close)
+     expanded   → the 292x50 capture pill (grip + Full + Region + Rec + fold + close)
 
-   The WINDOW size changes with the state (58x74 ↔ 252x60, driven from Rust;
+   The WINDOW size changes with the state (58x74 ↔ 304x60, driven from Rust;
    see `windows.rs`), so nothing invisible ever blocks the desktop behind it.
    Both the tab and the pill are drag surfaces (`data-tauri-drag-region`,
    applied in `widget-main.ts`); buttons sit on top as ordinary controls. */
@@ -17,11 +17,15 @@
   --accent-press: rgba(61, 126, 194, 0.32);
   --spine-glow: rgba(111, 163, 220, 0.55);
 
-  --surface: linear-gradient(180deg, rgba(40, 41, 45, 0.86), rgba(24, 25, 28, 0.90));
-  --surface-edge: rgba(255, 255, 255, 0.14);
-  --stroke: rgba(255, 255, 255, 0.10);
-  --shade: 0 12px 30px rgba(8, 8, 10, 0.55), 0 3px 8px rgba(8, 8, 10, 0.45);
-  --shade-tab: 0 6px 16px rgba(8, 8, 10, 0.48), 0 2px 5px rgba(8, 8, 10, 0.38);
+  /* Translucent enough that the wallpaper bleeds through the blur — a glass
+     tab, not an opaque sticker. The hairline stroke + contact shadow keep it
+     findable on dark and busy backgrounds alike. */
+  --surface: linear-gradient(180deg, rgba(38, 39, 44, 0.62), rgba(22, 23, 26, 0.70));
+  --surface-edge: rgba(255, 255, 255, 0.18);
+  --surface-bottom: rgba(0, 0, 0, 0.28);
+  --stroke: rgba(255, 255, 255, 0.16);
+  --shade: 0 1px 2px rgba(8, 8, 10, 0.45), 0 12px 30px rgba(8, 8, 10, 0.45), 0 3px 8px rgba(8, 8, 10, 0.35);
+  --shade-tab: 0 1px 2px rgba(8, 8, 10, 0.50), 0 5px 12px rgba(8, 8, 10, 0.40), 0 2px 5px rgba(8, 8, 10, 0.32);
   --text: #f0f1f3;
   --muted: #a8aab2;
   --hover: rgba(255, 255, 255, 0.08);
@@ -30,11 +34,12 @@
 }
 
 :root[data-theme="light"] {
-  --surface: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(245, 246, 248, 0.94));
+  --surface: linear-gradient(180deg, rgba(255, 255, 255, 0.68), rgba(244, 245, 247, 0.76));
   --surface-edge: rgba(255, 255, 255, 0.9);
-  --stroke: rgba(25, 26, 30, 0.12);
-  --shade: 0 12px 28px rgba(30, 30, 34, 0.20), 0 3px 7px rgba(30, 30, 34, 0.14);
-  --shade-tab: 0 6px 14px rgba(30, 30, 34, 0.18), 0 2px 4px rgba(30, 30, 34, 0.12);
+  --surface-bottom: rgba(25, 26, 30, 0.10);
+  --stroke: rgba(25, 26, 30, 0.18);
+  --shade: 0 1px 2px rgba(30, 30, 34, 0.16), 0 12px 28px rgba(30, 30, 34, 0.18), 0 3px 7px rgba(30, 30, 34, 0.12);
+  --shade-tab: 0 1px 2px rgba(30, 30, 34, 0.18), 0 5px 11px rgba(30, 30, 34, 0.16), 0 2px 4px rgba(30, 30, 34, 0.10);
   --text: #232428;
   --muted: #63656e;
   --hover: rgba(25, 26, 30, 0.06);
@@ -77,9 +82,11 @@ html, body {
 /* --------------------------------------------------------------- the tab */
 
 /* The "flärp" is a vertical bookmark tab, not a generic glass square:
-   - a 3px accent SPINE on the left edge — the brand's horn-line, and the
-     thing that makes the tab findable on any wallpaper;
-   - the unicorn mark (same silhouette as the File trigger and app icon);
+   - a 3px accent SPINE flush with the left edge — a bookmark ribbon, part of
+     the tab's anatomy (an inset bar reads as a scrollbar), and the thing that
+     makes the tab findable on any wallpaper;
+   - the unicorn mark (same silhouette as the File trigger and app icon),
+     enlarged and optically centred in the field right of the spine;
    - one tight corner (bottom-left) so the shape reads as a tab, not a button;
    - a slow, quiet breath on the spine while idle. It never moves, never
      blinks hard — it just refuses to be invisible. */
@@ -96,9 +103,14 @@ html, body {
   border: 1px solid var(--stroke);
   border-radius: 13px 13px 13px 5px;
   background: var(--surface);
-  box-shadow: var(--shade-tab), inset 0 1px 0 var(--surface-edge);
+  /* Directional glass rim: specular top light, shaded bottom edge. */
+  box-shadow: var(--shade-tab), inset 0 1px 0 var(--surface-edge),
+              inset 0 -1px 0 var(--surface-bottom);
   color: var(--accent-bright);
   cursor: grab;
+  /* Clips the flush spine to the tab silhouette so the ribbon follows the
+     corner curves instead of poking past them. */
+  overflow: hidden;
   backdrop-filter: blur(18px) saturate(150%);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
   transition: transform 140ms ease, opacity 120ms ease,
@@ -115,9 +127,12 @@ html, body {
   box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--accent-soft);
 }
 /* The tab glyph is NOT a `.w-icon` (that class pins pill-button icons to
-   17px and used to win the cascade here, shrinking the flärp's mark). */
-.w-tab__glyph { display: block; transform: translateX(1.5px); }
-.w-tab__glyph svg { display: block; width: 26px; height: 26px; pointer-events: none; }
+   17px and used to win the cascade here, shrinking the flärp's mark).
+   The mark's own artwork is biased right-of-centre in its 32-unit viewBox
+   (content spans x≈10–28, y≈2–29); the translate cancels that bias so the
+   silhouette sits optically centred in the field right of the spine. */
+.w-tab__glyph { display: block; transform: translate(-2px, 1.4px); }
+.w-tab__glyph svg { display: block; width: 30px; height: 30px; pointer-events: none; }
 
 /* The glyph must not be a hit target: the tab itself has to receive the
    pointer so the native drag region (and the expand-on-hover) works. */
@@ -125,18 +140,33 @@ html, body {
 
 /* The accent spine — shared by tab and pill so the two states read as one
    object. Absolutely positioned: it never joins the flex layout or the hit
-   testing, the surface underneath stays the drag handle. */
+   testing, the surface underneath stays the drag handle.
+   On the tab it is a FULL-HEIGHT ribbon flush with the left edge (clipped to
+   the corner curves by .w-tab's overflow:hidden) — anatomy, not a scrollbar
+   thumb. The pill insets its copy past the 25px end radius. */
 .w-spine {
   position: absolute;
-  left: 4px;
-  top: 9px;
-  bottom: 9px;
+  left: 0;
+  top: 0;
+  bottom: 0;
   width: 3px;
-  border-radius: 2px;
+  border-radius: 0;
   background: linear-gradient(180deg, var(--accent-bright), var(--accent));
   pointer-events: none;
 }
 .w-tab .w-spine { animation: w-breathe 4.5s ease-in-out infinite; }
+/* A 1px light line where the ribbon meets the glass — a folded edge, not a
+   painted stripe. Lives on ::after so the breathing box-shadow animation
+   never overwrites it. */
+.w-tab .w-spine::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.25);
+}
 .w-tab:hover .w-spine {
   animation: none;
   opacity: 1;
@@ -165,11 +195,12 @@ html, body {
   gap: 3px;
   width: 292px;
   height: 50px;
-  padding: 0 6px;
+  padding: 0 8px 0 10px;
   border: 1px solid var(--stroke);
   border-radius: 25px;
   background: var(--surface);
-  box-shadow: var(--shade), inset 0 1px 0 var(--surface-edge);
+  box-shadow: var(--shade), inset 0 1px 0 var(--surface-edge),
+              inset 0 -1px 0 var(--surface-bottom);
   color: var(--text);
   cursor: grab;
   backdrop-filter: blur(20px) saturate(150%);
@@ -179,12 +210,14 @@ html, body {
 .w-bar:active { cursor: grabbing; }
 
 /* The pill carries the same spine, thinner — family resemblance with the tab
-   it folds into. Sits inside the 6px padding, left of the grip. */
+   it folds into. Inset past the 25px end radius so it is never clipped by the
+   corner curve, left of the grip. */
 .w-bar .w-spine {
-  left: 3px;
-  top: 10px;
-  bottom: 10px;
+  left: 5px;
+  top: 12px;
+  bottom: 12px;
   width: 2px;
+  border-radius: 1px;
   opacity: 0.8;
 }
 
@@ -207,7 +240,7 @@ html, body {
   border-radius: 8px;
   cursor: grab;
   color: var(--muted);
-  opacity: 0.7;
+  opacity: 0.85;
   transition: opacity 140ms ease, background-color 140ms ease, color 140ms ease;
 }
 .w-grip:hover { opacity: 1; background: var(--hover); color: var(--text); }
@@ -279,22 +312,27 @@ html, body {
 }
 .w-btn:not(.w-btn--ghost):hover::after { transform: translateX(-50%) scaleX(1); opacity: 0.9; }
 
-/* Icon-only ghost affordances (fold back to the tab, close). */
+/* Icon-only ghost affordances (fold back to the tab, close). Same 40px height
+   as the labelled buttons, with bottom padding lifting the icon onto the same
+   optical line as their icons — one baseline across the whole row. */
 .w-btn--ghost {
   flex: 0 0 auto;
   width: 30px;
-  height: 30px;
-  padding: 0;
-  border-radius: 9px;
+  height: 40px;
+  padding: 0 0 13px;
+  border-radius: 11px;
   color: var(--muted);
 }
 .w-btn--ghost:hover { background: var(--press); color: var(--text); }
 .w-btn--ghost::after { display: none; }
 
 /* Fold: the pill retreats into its tab. Slightly narrower than close. */
-.w-btn--fold { width: 26px; color: var(--muted); }
+.w-btn--fold { width: 26px; margin-left: 2px; color: var(--muted); }
 .w-btn--fold:hover { color: var(--accent-bright); }
 .w-btn--close:hover { color: var(--danger); }
+/* Ghost glyphs a hair larger than the labelled icons: their strokes spread
+   over more of the 24-unit viewBox, so 17px read lighter than the row. */
+.w-btn--ghost .w-icon, .w-btn--ghost .w-icon svg { width: 18px; height: 18px; }
 
 /* Record: the classic red dot. Idle = red glyph on the glass; live = filled
    red Stop button with a slow pulse, so a running take is unmistakable. */
@@ -315,22 +353,26 @@ html, body {
 }
 
 /* While a take runs, the tab's spine breathes red instead of the accent —
-   the folded widget is still a recording indicator. */
+   the folded widget is still a recording indicator. The breath never dips
+   below 0.8 opacity: a half-transparent red reads as coral on warm
+   wallpapers and loses the "recording" signal. */
 .w-widget[data-recording="true"] .w-spine {
   background: #e5484d;
   animation: w-breathe-red 1.6s ease-in-out infinite;
 }
 
 @keyframes w-breathe-red {
-  0%, 100% { opacity: 0.55; box-shadow: 0 0 0 rgba(229, 72, 77, 0); }
-  50%      { opacity: 1;    box-shadow: 0 0 10px rgba(229, 72, 77, 0.55); }
+  /* A persistent halo (never fully off) separates the red from warm
+     wallpapers where red-on-orange would otherwise camouflage. */
+  0%, 100% { opacity: 0.8; box-shadow: 0 0 6px rgba(229, 72, 77, 0.35); }
+  50%      { opacity: 1;   box-shadow: 0 0 12px rgba(229, 72, 77, 0.65); }
 }
 
 .w-sep {
   flex: 0 0 auto;
   width: 1px;
-  height: 24px;
-  margin: 0 2px;
+  height: 26px;
+  margin: 0 4px;
   border-radius: 1px;
   background: var(--stroke);
 }

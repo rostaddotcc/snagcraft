@@ -110,8 +110,9 @@ const ICON_STOP =
   `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">` +
   `<rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor"/></svg>`;
 
-// Fold: the pill retreats back into its tab.
-const ICON_FOLD = svg(`<path d="M14.5 5.5L8 12l6.5 6.5"/><path d="M8 12h11"/>`);
+// Fold: the pill retreats back into its tab. A double chevron reads as
+// "collapse"; the old arrow-with-tail read as "back/undo".
+const ICON_FOLD = svg(`<path d="M11.5 5.5L5 12l6.5 6.5"/><path d="M18.5 5.5L12 12l6.5 6.5"/>`);
 
 const ICON_CLOSE = svg(`<path d="M6.5 6.5l11 11"/><path d="M17.5 6.5l-11 11"/>`);
 
@@ -272,7 +273,7 @@ function mount(): void {
     if (expanded) return;
     const mine = ++gen;
     expanded = true;
-    // Grow the window BEFORE the pill is painted: a 240px pill inside a 56px
+    // Grow the window BEFORE the pill is painted: a 292px pill inside a 58px
     // window would be clipped for as long as the resize takes to land.
     await send("expand");
     if (gen !== mine || !expanded) return;
