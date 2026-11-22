@@ -19,21 +19,11 @@ body:
       placeholder: "Hermes Agent running <model>"
     validations:
       required: true
-  - type: dropdown
-    id: edition
-    attributes:
-      label: Edition under test
-      options:
-        - Stable — Tauri v1.5.x
-        - Rust edition (pre-release)
-        - Both / not sure
-    validations:
-      required: true
   - type: input
     id: version
     attributes:
       label: Version
-      placeholder: "v1.5.3 or rust-v0.1.0 (release tag or About box)"
+      placeholder: "v1.5.3 (release tag or About box)"
     validations:
       required: true
   - type: textarea

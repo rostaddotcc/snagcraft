@@ -7,16 +7,6 @@ body:
       value: |
         Tell us about the **problem you hit** first — there may be a better fix than
         the one you imagined, or an existing feature you haven't found yet.
-  - type: dropdown
-    id: edition
-    attributes:
-      label: Edition this concerns
-      options:
-        - Stable — Tauri v1.5.x
-        - Rust edition (pre-release)
-        - Both / doesn't matter
-    validations:
-      required: true
   - type: textarea
     id: problem
     attributes:

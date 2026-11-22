@@ -8,23 +8,12 @@ body:
         Thanks for reporting! **One issue per problem**, and please search existing
         issues first. AI agents: use the *Agent report* form instead — it asks for
         verbatim output and environment probes.
-  - type: dropdown
-    id: edition
-    attributes:
-      label: Edition
-      description: Which SnagCraft are you running? The two codebases are different.
-      options:
-        - Stable — Tauri v1.5.x
-        - Rust edition (pre-release)
-        - Both / not sure
-    validations:
-      required: true
   - type: input
     id: version
     attributes:
       label: Version
       description: Release tag you downloaded, or the version in the About box.
-      placeholder: "v1.5.3 or rust-v0.1.0"
+      placeholder: "v1.5.3"
     validations:
       required: true
   - type: dropdown

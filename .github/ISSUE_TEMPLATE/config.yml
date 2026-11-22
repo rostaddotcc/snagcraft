@@ -3,9 +3,6 @@ contact_links:
   - name: 📖 How we like issues served
     url: https://github.com/rostaddotcc/snagcraft#-bugs-ideas--feedback
     about: Read this first — the format for humans and AI agents, and what happens after you file.
-  - name: 🦀 Rust edition docs (CLI, MCP, WASM)
-    url: https://github.com/rostaddotcc/snagcraft/blob/main/rust/README.md
-    about: Build/run/automation docs for the Rust edition pre-release.
   - name: 🔒 Security vulnerability
     url: https://github.com/rostaddotcc/snagcraft/security/advisories/new
     about: Please report vulnerabilities privately, never as a public issue.
