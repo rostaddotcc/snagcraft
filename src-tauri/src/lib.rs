@@ -59,6 +59,9 @@ pub fn run() {
             // (ScreenCast portal picker -> PipeWire -> one frame -> PNG)
             commands::capture_window,
             commands::capture_monitor,
+            // Multi-monitor on Windows/macOS: in-app screen chooser (issue #1)
+            commands::list_monitors,
+            commands::capture_monitor_index,
             commands::save_png,
             commands::copy_png,
             commands::copy_text,

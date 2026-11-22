@@ -115,6 +115,27 @@ pub async fn capture_monitor(app: tauri::AppHandle) -> Result<CaptureResult, Str
     grabbing(app, crate::capture::capture_monitor).await
 }
 
+/// Enumerate connected displays for the in-app screen chooser (issue #1).
+///
+/// Linux returns an empty list — there the desktop portal owns the picking.
+#[tauri::command]
+pub async fn list_monitors() -> Result<Vec<crate::capture::MonitorInfo>, String> {
+    crate::capture::list_monitors()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Grab one monitor by its `list_monitors` index (Windows/macOS, issue #1).
+///
+/// Same hide/settle/restore dance as every other still grab.
+#[tauri::command]
+pub async fn capture_monitor_index(
+    app: tauri::AppHandle,
+    index: usize,
+) -> Result<CaptureResult, String> {
+    grabbing(app, move || crate::capture::capture_monitor_index(index)).await
+}
+
 /// Hide the main window, run `grab`, restore the window, then map the result.
 ///
 /// Restore happens before the error is returned, so a failed or cancelled grab

@@ -24,10 +24,138 @@ pub async fn capture_full() -> anyhow::Result<(String, u32, u32)> {
     png_bytes_to_data_url(&bytes)
 }
 
-/// Capture the primary screen on macOS/Windows through xcap.
+/// Capture the full virtual screen on macOS/Windows through xcap: every
+/// connected monitor is grabbed and composited at its virtual-desktop position,
+/// so multi-monitor setups get one image spanning all screens (issue #1).
 #[cfg(not(target_os = "linux"))]
 pub async fn capture_full() -> anyhow::Result<(String, u32, u32)> {
-    let monitor = xcap::Monitor::from_point(0, 0)?;
+    let monitors = xcap::Monitor::all()?;
+    if monitors.is_empty() {
+        anyhow::bail!("no monitors reported by the display server");
+    }
+    let mut shots = Vec::with_capacity(monitors.len());
+    for monitor in &monitors {
+        shots.push(MonitorShot {
+            x: monitor.x()?,
+            y: monitor.y()?,
+            img: monitor.capture_image()?,
+        });
+    }
+    let composed = compose_shots(&shots);
+    let mut png = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut png);
+    image::DynamicImage::ImageRgba8(composed)
+        .write_to(&mut cursor, image::ImageFormat::Png)
+        .map_err(|e| anyhow::anyhow!("failed to encode screenshot as PNG: {e}"))?;
+    png_bytes_to_data_url(&png)
+}
+
+/// One grabbed monitor at its virtual-desktop position (physical pixels).
+///
+/// Only Windows/macOS `capture_full` constructs this; it stays cross-platform
+/// (with the lint silenced) so the compose tests run on Linux CI too.
+#[allow(dead_code)]
+pub struct MonitorShot {
+    pub x: i32,
+    pub y: i32,
+    pub img: image::RgbaImage,
+}
+
+/// Composite monitor grabs into one image spanning the virtual desktop.
+///
+/// Coordinates are normalised so the top-left of the bounding box becomes
+/// (0, 0); gaps between non-adjacent monitors stay opaque black. Pure and
+/// platform-independent so it is unit-testable everywhere.
+#[allow(dead_code)]
+pub fn compose_shots(shots: &[MonitorShot]) -> image::RgbaImage {
+    let Some(first) = shots.first() else {
+        return image::RgbaImage::new(1, 1);
+    };
+    let min_x = shots.iter().map(|s| s.x).min().unwrap_or(first.x);
+    let min_y = shots.iter().map(|s| s.y).min().unwrap_or(first.y);
+    let max_x = shots
+        .iter()
+        .map(|s| s.x.saturating_add(s.img.width() as i32))
+        .max()
+        .unwrap_or(min_x + 1);
+    let max_y = shots
+        .iter()
+        .map(|s| s.y.saturating_add(s.img.height() as i32))
+        .max()
+        .unwrap_or(min_y + 1);
+    let width = (max_x - min_x).max(1) as u32;
+    let height = (max_y - min_y).max(1) as u32;
+
+    let mut canvas = image::RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 0, 255]));
+    for shot in shots {
+        let dx = (shot.x - min_x).max(0) as u32;
+        let dy = (shot.y - min_y).max(0) as u32;
+        for (sx, sy, px) in shot.img.enumerate_pixels() {
+            let (tx, ty) = (dx.saturating_add(sx), dy.saturating_add(sy));
+            if tx < width && ty < height {
+                canvas.put_pixel(tx, ty, *px);
+            }
+        }
+    }
+    canvas
+}
+
+/// Metadata for one connected display, in virtual-desktop coordinates
+/// (physical pixels). Frontend monitor pickers render from this.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorInfo {
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub scale_factor: f32,
+    pub is_primary: bool,
+}
+
+/// Enumerate connected displays.
+///
+/// Linux returns an EMPTY list by design: there the desktop portal owns screen
+/// selection (its picker shows the real outputs), so an in-app list would be a
+/// second, worse picker. Windows/macOS return every xcap-reported monitor.
+#[cfg(target_os = "linux")]
+pub async fn list_monitors() -> anyhow::Result<Vec<MonitorInfo>> {
+    Ok(Vec::new())
+}
+
+/// Windows/macOS monitor enumeration through xcap (issue #1).
+#[cfg(not(target_os = "linux"))]
+pub async fn list_monitors() -> anyhow::Result<Vec<MonitorInfo>> {
+    let mut out = Vec::new();
+    for monitor in xcap::Monitor::all()? {
+        let name = monitor
+            .friendly_name()
+            .or_else(|_| monitor.name())
+            .unwrap_or_else(|_| "Display".to_string());
+        out.push(MonitorInfo {
+            name,
+            x: monitor.x()?,
+            y: monitor.y()?,
+            width: monitor.width()?,
+            height: monitor.height()?,
+            scale_factor: monitor.scale_factor()?,
+            is_primary: monitor.is_primary()?,
+        });
+    }
+    Ok(out)
+}
+
+/// Capture one monitor by its [`list_monitors`] index (Windows/macOS).
+#[cfg(not(target_os = "linux"))]
+pub async fn capture_monitor_index(index: usize) -> anyhow::Result<(String, u32, u32)> {
+    let monitors = xcap::Monitor::all()?;
+    let Some(monitor) = monitors.get(index) else {
+        anyhow::bail!(
+            "monitor {index} is no longer connected ({} present)",
+            monitors.len()
+        );
+    };
     let rgba = monitor.capture_image()?;
     let mut png = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut png);
@@ -35,6 +163,14 @@ pub async fn capture_full() -> anyhow::Result<(String, u32, u32)> {
         .write_to(&mut cursor, image::ImageFormat::Png)
         .map_err(|e| anyhow::anyhow!("failed to encode screenshot as PNG: {e}"))?;
     png_bytes_to_data_url(&png)
+}
+
+/// Linux picks monitors in the portal dialog, never by index.
+#[cfg(target_os = "linux")]
+pub async fn capture_monitor_index(_index: usize) -> anyhow::Result<(String, u32, u32)> {
+    anyhow::bail!(
+        "monitor capture by index is not used on Linux — the portal picker selects the screen"
+    )
 }
 
 /// One user-picked window, grabbed as a single frame (Wave 10).
@@ -93,16 +229,25 @@ pub fn rgb24_to_data_url(
     png_bytes_to_data_url(&png)
 }
 
-/// Window/monitor capture is portal-based, so non-Linux builds report the same
-/// honest "not here yet" error as the recording backend instead of pretending.
+/// Window capture is portal-based, so non-Linux builds report the same honest
+/// "not here yet" error as the recording backend instead of pretending.
 #[cfg(not(target_os = "linux"))]
 pub async fn capture_window() -> anyhow::Result<(String, u32, u32)> {
     anyhow::bail!("window capture is not supported on this platform yet")
 }
 
+/// One monitor on Windows/macOS: a lone display is grabbed directly; with
+/// several, the frontend shows its own picker (fed by [`list_monitors`]) and
+/// calls [`capture_monitor_index`] — this fallback stays honest if it is
+/// reached anyway.
 #[cfg(not(target_os = "linux"))]
 pub async fn capture_monitor() -> anyhow::Result<(String, u32, u32)> {
-    anyhow::bail!("monitor capture is not supported on this platform yet")
+    let monitors = xcap::Monitor::all()?;
+    match monitors.len() {
+        0 => anyhow::bail!("no monitors reported by the display server"),
+        1 => capture_monitor_index(0).await,
+        n => anyhow::bail!("{n} monitors connected — pick one in the screen chooser"),
+    }
 }
 
 /// Convert the portal's `file://` URI into a local path.
@@ -280,5 +425,80 @@ mod tests {
         // 4x4 rgb24 needs 48 bytes; 47 must not become a blank image.
         assert!(rgb24_to_data_url(&[0u8; 47], 4, 4).is_err());
         assert!(rgb24_to_data_url(&[], 0, 0).is_err());
+    }
+
+    fn solid(w: u32, h: u32, rgba: [u8; 4]) -> image::RgbaImage {
+        image::RgbaImage::from_pixel(w, h, image::Rgba(rgba))
+    }
+
+    #[test]
+    fn compose_places_monitors_by_virtual_desktop_position() {
+        // Two 2x2 "monitors" side by side: red at the origin, blue at x=2.
+        let shots = [
+            MonitorShot {
+                x: 0,
+                y: 0,
+                img: solid(2, 2, [255, 0, 0, 255]),
+            },
+            MonitorShot {
+                x: 2,
+                y: 0,
+                img: solid(2, 2, [0, 0, 255, 255]),
+            },
+        ];
+        let canvas = compose_shots(&shots);
+        assert_eq!((canvas.width(), canvas.height()), (4, 2));
+        assert_eq!(canvas.get_pixel(0, 0).0, [255, 0, 0, 255]);
+        assert_eq!(canvas.get_pixel(3, 1).0, [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn compose_normalises_negative_coordinates() {
+        // A monitor to the LEFT of the primary (negative x) must land at 0
+        // after normalisation, the primary shifted right — nothing is clipped.
+        let shots = [
+            MonitorShot {
+                x: 0,
+                y: 0,
+                img: solid(2, 2, [255, 0, 0, 255]),
+            },
+            MonitorShot {
+                x: -3,
+                y: -1,
+                img: solid(3, 3, [0, 255, 0, 255]),
+            },
+        ];
+        let canvas = compose_shots(&shots);
+        assert_eq!((canvas.width(), canvas.height()), (5, 3));
+        assert_eq!(canvas.get_pixel(0, 0).0, [0, 255, 0, 255], "green top-left");
+        assert_eq!(canvas.get_pixel(3, 1).0, [255, 0, 0, 255], "red shifted");
+    }
+
+    #[test]
+    fn compose_fills_gaps_black_and_survives_edge_cases() {
+        // Non-adjacent monitors leave a gap between them.
+        let shots = [
+            MonitorShot {
+                x: 0,
+                y: 0,
+                img: solid(1, 1, [255, 255, 255, 255]),
+            },
+            MonitorShot {
+                x: 4,
+                y: 0,
+                img: solid(1, 1, [255, 255, 255, 255]),
+            },
+        ];
+        let canvas = compose_shots(&shots);
+        assert_eq!(canvas.width(), 5);
+        assert_eq!(
+            canvas.get_pixel(2, 0).0,
+            [0, 0, 0, 255],
+            "gap is opaque black"
+        );
+
+        // No shots at all must not panic (1x1 placeholder).
+        let empty = compose_shots(&[]);
+        assert_eq!((empty.width(), empty.height()), (1, 1));
     }
 }

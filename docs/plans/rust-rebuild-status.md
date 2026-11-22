@@ -1767,6 +1767,36 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   examples + upstream symptom reports before guessing; current-thread tokio +
   zbus long picker waits are a known fragile combo.
 
+## 2026-11-22 — PIVOT: Rust rewrite paused, Tauri app is the loop target again
+
+- rostad (new loop): "gå tillbaka till vår tauri app … ta bort alla rust-releaser
+  från github, uppdatera readme med vad som är sant … fortsätt putsa på den
+  gamla appen för där fungerade väldigt mycket. När den är helt perfekt så gör
+  vi ett nytt försök att porta den till rust."
+- Deleted GitHub releases rust-v0.1.0 + rust-v0.2.0 incl. tags (explicit OK).
+  v1.5.3 stays Latest. rust-release.yml's v* tag trigger commented out (paused)
+  so stable tags don't build Rust artifacts; rust.yml already paths-filtered.
+- README rewritten: one app (Tauri). All rust-edition mentions removed
+  (rostad: "vi behöver inte nämna rust appen alls"). rust/ stays in-repo as
+  reference for the future re-port.
+- First polish item — issue #1 "Multiple monitors" (back in scope): the real gap
+  was Windows/macOS, where capture_full grabbed only `Monitor::from_point(0,0)`
+  (primary) and capture_monitor/window bailed "not supported".
+  - capture.rs: capture_full now composites ALL monitors (pure `compose_shots`,
+    3 unit tests: positions, negative-coord normalisation, gap fill/empty);
+    new `list_monitors` (xcap metadata; Linux returns [] — portal owns picking)
+    + `capture_monitor_index`; capture_monitor on Win/mac grabs a lone display
+    directly, otherwise honest "pick one" bail.
+  - commands.rs/lib.rs: `list_monitors` + `capture_monitor_index` commands
+    (hide/settle/restore via `grabbing`).
+  - app.ts: in-app "Choose a screen" modal (monitor-item buttons, Esc/backdrop/
+    Cancel = cancelled) shown when list_monitors returns >1; Linux flow
+    unchanged (portal picker). style.css: .monitor-* styles.
+  - Verified: cargo fmt/clippy -D warnings/test --lib (compose tests), tsc
+    --noEmit clean; Windows cross `cargo check --target x86_64-pc-windows-msvc`
+    + CI windows job = compile proof only, real multi-monitor behaviour needs a
+    Windows host (rostad) — never claim more than that.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

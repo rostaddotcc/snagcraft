@@ -32,6 +32,16 @@ import {
 } from "./settings";
 
 type CaptureResult = { dataUrl: string; width: number; height: number };
+/** One connected display, as reported by the backend (issue #1). */
+type MonitorInfo = {
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scaleFactor: number;
+  isPrimary: boolean;
+};
 type StatusKind = "info" | "success" | "error" | "recording";
 type CaptureMode = "full" | "region" | "window" | "monitor" | "scrolling" | "interval";
 /** Recording modes: the whole screen via the OS picker, a dragged region, or one window. */
@@ -849,7 +859,7 @@ export function mountApp(root: HTMLElement): void {
               <span class="menu-check">${ICONS.check}</span>
               <span class="menu-key-space" aria-hidden="true"></span>
             </button>
-            <button type="button" class="menu-item" role="menuitemradio" data-mode="monitor" aria-checked="false" title="Pick one monitor in the system dialog">
+            <button type="button" class="menu-item" role="menuitemradio" data-mode="monitor" aria-checked="false" title="Choose which screen to capture">
               <span class="menu-icon">${ICONS.monitor}</span>
               <span class="menu-label">Choose screen</span>
               <span class="menu-check">${ICONS.check}</span>
@@ -1184,6 +1194,21 @@ export function mountApp(root: HTMLElement): void {
         </div>
         <footer class="modal-foot about-foot">
           <button type="button" class="btn-primary" id="about-ok">OK</button>
+        </footer>
+      </div>
+    </div>
+    <div class="modal-backdrop" id="monitor-modal" hidden>
+      <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="monitor-title" tabindex="-1">
+        <header class="modal-head">
+          <div class="modal-heading">
+            <h2 class="modal-title" id="monitor-title">Choose a screen</h2>
+            <p class="modal-desc">Which display should SnagCraft capture?</p>
+          </div>
+          <button type="button" class="icon-btn modal-x" id="monitor-close" aria-label="Close" title="Close (Esc)">${ICONS.close}</button>
+        </header>
+        <div class="modal-body monitor-body" id="monitor-list"></div>
+        <footer class="modal-foot">
+          <button type="button" class="btn-secondary" id="monitor-cancel">Cancel</button>
         </footer>
       </div>
     </div>
@@ -2226,9 +2251,9 @@ export function mountApp(root: HTMLElement): void {
       },
       monitor: {
         short: "Screen",
-        title: "Choose a screen to capture — pick one in the system dialog",
+        title: "Choose a screen to capture — pick one in the screen chooser",
         aria: "Choose a screen to capture",
-        announce: "Capture mode: choose screen — the system dialog asks which monitor to grab.",
+        announce: "Capture mode: choose screen — a chooser asks which monitor to grab.",
       },
       scrolling: {
         short: "Scroll",
@@ -3048,15 +3073,103 @@ export function mountApp(root: HTMLElement): void {
   }
 
   /**
-   * Window / monitor capture: the OS portal shows its own picker, so the only
-   * things we own are the waiting status, the load and the auto-save.
+   * In-app screen chooser for Windows/macOS (issue #1): no portal picker
+   * exists there, so the monitors from `list_monitors` are offered as buttons.
+   * Resolves the chosen index, or null when cancelled.
+   */
+  function pickMonitor(monitors: MonitorInfo[]): Promise<number | null> {
+    return new Promise<number | null>((resolve) => {
+      const backdrop = $<HTMLDivElement>("#monitor-modal");
+      const listEl = $<HTMLDivElement>("#monitor-list");
+      const cancelBtn = $<HTMLButtonElement>("#monitor-cancel");
+      const closeBtn = $<HTMLButtonElement>("#monitor-close");
+      let settled = false;
+
+      const onKey = (ev: KeyboardEvent): void => {
+        if (ev.key === "Escape") {
+          ev.preventDefault();
+          ev.stopPropagation();
+          finish(null);
+        }
+      };
+      const onBackdrop = (ev: PointerEvent | MouseEvent): void => {
+        if (ev.target === backdrop) finish(null);
+      };
+      const onCancel = (): void => finish(null);
+
+      function finish(value: number | null): void {
+        if (settled) return;
+        settled = true;
+        document.removeEventListener("keydown", onKey, true);
+        backdrop.removeEventListener("pointerdown", onBackdrop);
+        cancelBtn.removeEventListener("click", onCancel);
+        closeBtn.removeEventListener("click", onCancel);
+        backdrop.classList.remove("is-open");
+        backdrop.hidden = true;
+        resolve(value);
+      }
+
+      listEl.replaceChildren();
+      monitors.forEach((monitor, index) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "monitor-item";
+        const name = document.createElement("span");
+        name.className = "monitor-name";
+        name.textContent = monitor.name || `Display ${index + 1}`;
+        const meta = document.createElement("span");
+        meta.className = "monitor-meta";
+        const scale =
+          monitor.scaleFactor > 0 && monitor.scaleFactor !== 1
+            ? ` · ${Math.round(monitor.scaleFactor * 100)}%`
+            : "";
+        const primary = monitor.isPrimary ? " · primary" : "";
+        meta.textContent = `${monitor.width} × ${monitor.height}${scale}${primary}`;
+        btn.append(name, meta);
+        btn.addEventListener("click", () => finish(index));
+        listEl.appendChild(btn);
+      });
+
+      cancelBtn.addEventListener("click", onCancel);
+      closeBtn.addEventListener("click", onCancel);
+      backdrop.addEventListener("pointerdown", onBackdrop);
+      document.addEventListener("keydown", onKey, true);
+      backdrop.hidden = false;
+      void backdrop.offsetWidth;
+      backdrop.classList.add("is-open");
+      listEl.querySelector<HTMLElement>(".monitor-item")?.focus({ preventScroll: true });
+    });
+  }
+
+  /**
+   * Window / monitor capture: on Linux the OS portal shows its own picker, so
+   * the only things we own are the waiting status, the load and the auto-save.
+   * On Windows/macOS the monitor list comes from the backend and the chooser
+   * above replaces the missing OS dialog.
    */
   async function runPickerCapture(kind: PickerMode): Promise<void> {
-    const command = kind === "window" ? "capture_window" : "capture_monitor";
+    let command = kind === "window" ? "capture_window" : "capture_monitor";
+    let args: { index?: number } | undefined;
     const what = kind === "window" ? "window" : "screen";
+    if (kind === "monitor") {
+      // Linux returns an empty list (the portal is the picker there); only a
+      // genuine multi-monitor Windows/macOS setup opens the in-app chooser.
+      const monitors = await invoke<MonitorInfo[]>("list_monitors").catch(
+        () => [] as MonitorInfo[],
+      );
+      if (monitors.length > 1) {
+        const index = await pickMonitor(monitors);
+        if (index === null) {
+          setStatus("Capture cancelled");
+          return;
+        }
+        command = "capture_monitor_index";
+        args = { index };
+      }
+    }
     let res: CaptureResult;
     try {
-      res = await invoke<CaptureResult>(command);
+      res = await invoke<CaptureResult>(command, args);
     } catch (e) {
       const message = errText(e);
       if (isCancelled(message)) {
