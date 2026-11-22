@@ -12,9 +12,12 @@ name: Rust release artifacts
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+  # PAUSED (2026-11-22): the Rust rewrite is on ice — v* tags belong to the
+  # Tauri app and must not trigger Rust artifact builds. Re-add the tag
+  # trigger when the rewrite resumes.
+  # push:
+  #   tags:
+  #     - "v*"
 
 permissions:
   contents: read
