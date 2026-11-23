@@ -146,6 +146,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The latest.json step runs a repo script, so the job needs the tree (it
+      # only downloads build artifacts otherwise).
+      - uses: actions/checkout@v5
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
