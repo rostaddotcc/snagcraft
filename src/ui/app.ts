@@ -6242,6 +6242,15 @@ export function mountApp(root: HTMLElement): void {
     /* plain browser or an older backend without the tray */
   });
 
+  // System tray → "Check for updates…": the same flow as the File menu entry.
+  void listen("tray-update-check", () => {
+    void checkForUpdates(true).catch(() => {
+      /* the status line already explains a failure */
+    });
+  }).catch(() => {
+    /* plain browser or an older backend without the tray */
+  });
+
   // OS integration: `snagcraft --capture` / `--region` from a panel companion
   // or terminal, forwarded by the single-instance plugin.
   void listen<{ mode?: string }>("cli-capture", (ev) => {

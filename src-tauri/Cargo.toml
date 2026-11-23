@@ -1,6 +1,6 @@
 [package]
 name = "snagcraft"
-version = "1.5.7"
+version = "1.5.8"
 description = "Open-source Snagit-style screen capture and annotation"
 authors = ["rostad"]
 license = "GPL-3.0-or-later"

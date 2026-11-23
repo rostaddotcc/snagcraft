@@ -3,6 +3,14 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.5.8
+- **Check for updates from the tray.** The tray menu gained *Check for updates…*
+  right above *Quit*: it brings the window back and runs the same check (and the
+  same *Update now* flow), so a SnagCraft that lives minimised in the tray can be
+  updated without hunting for the File menu.
+- This release is also the one a 1.5.7 install sees, so the in-place update path
+  (`Update now` → signature check → *Restart now*) can be exercised for real.
+
 ## v1.5.7
 - **Update now.** The update dialog installs the new build for you: *Update now*
   downloads the signed AppImage with a live progress bar (size and percentage),

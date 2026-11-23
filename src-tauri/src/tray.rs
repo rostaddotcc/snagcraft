@@ -40,6 +40,7 @@ const TRAY_ICON_PNG: &[u8] = include_bytes!("../icons/32x32.png");
 const ID_SHOW: &str = "tray-show";
 const ID_CAPTURE: &str = "tray-capture-item";
 const ID_WIDGET: &str = "tray-widget";
+const ID_UPDATE: &str = "tray-update";
 const ID_QUIT: &str = "tray-quit";
 
 /// Show the main window from anywhere (tray click, second launch, …).
@@ -56,11 +57,12 @@ pub fn init_tray<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
     let show = MenuItemBuilder::with_id(ID_SHOW, "Show SnagCraft").build(app)?;
     let capture = MenuItemBuilder::with_id(ID_CAPTURE, "Capture").build(app)?;
     let widget = MenuItemBuilder::with_id(ID_WIDGET, "Floating widget").build(app)?;
+    let update = MenuItemBuilder::with_id(ID_UPDATE, "Check for updates…").build(app)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let quit = MenuItemBuilder::with_id(ID_QUIT, "Quit").build(app)?;
 
     let menu = MenuBuilder::new(app)
-        .items(&[&show, &capture, &widget, &sep, &quit])
+        .items(&[&show, &capture, &widget, &sep, &update, &quit])
         .build()?;
 
     let icon = tauri::image::Image::from_bytes(TRAY_ICON_PNG)?;
@@ -81,6 +83,12 @@ pub fn init_tray<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
             }
             ID_WIDGET => {
                 let _ = crate::windows::toggle_widget_for(app);
+            }
+            ID_UPDATE => {
+                // Same flow as File → Check for updates…, but the window may be
+                // hidden (tray-only): show it first so the dialog is visible.
+                show_main(app);
+                let _ = app.emit("tray-update-check", ());
             }
             ID_QUIT => crate::windows::request_quit(app),
             _ => {}
