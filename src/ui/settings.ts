@@ -103,6 +103,26 @@ export interface HotkeyStatus {
   granted: GrantedHotkey[];
 }
 
+/**
+ * State of the "default screenshot tool" takeover (Linux Cinnamon/GNOME):
+ * the desktop's own Print/Shift+Print bindings cleared and replaced with
+ * custom shortcuts that launch SnagCraft. See src-tauri/src/default_tool.rs.
+ */
+export interface DefaultToolStatus {
+  /** False on unsupported desktops / non-Linux — the card stays hidden. */
+  supported: boolean;
+  /** "Cinnamon" / "GNOME" when supported. */
+  desktop: string;
+  /** Our shortcuts are live and the built-in bindings are cleared. */
+  isDefault: boolean;
+  /** A backup of the previous system bindings exists. */
+  canRestore: boolean;
+  /** The command the desktop shortcuts run (AppImage-aware). */
+  command: string;
+  /** Honest reason when unsupported; empty otherwise. */
+  detail: string;
+}
+
 export interface ExportSettings {
   format: ExportFormat;
   quality: number;
@@ -358,6 +378,12 @@ export interface SettingsOptions {
   getAutostart?(): Promise<boolean>;
   /** Register / unregister SnagCraft as a login item. */
   setAutostart?(enabled: boolean): Promise<void>;
+  /** Default-screenshot-tool state (Linux Cinnamon/GNOME; Tauri in the shell). */
+  getDefaultToolStatus?(): Promise<DefaultToolStatus>;
+  /** Take over Print/Shift+Print after explicit confirmation; returns state. */
+  setDefaultTool?(): Promise<DefaultToolStatus>;
+  /** Put the desktop's previous screenshot bindings back; returns state. */
+  restoreDefaultTool?(): Promise<DefaultToolStatus>;
 }
 
 /** One microphone the recorder can capture. */
@@ -445,6 +471,16 @@ export class SettingsPanel {
   private hotkeyRegionPreview!: HTMLElement;
   private hotkeyRegisterBtn!: HTMLButtonElement;
   private hotkeyStatusEl!: HTMLElement;
+  private defaultToolEl!: HTMLElement;
+  private defaultToolDesktopEl!: HTMLElement;
+  private defaultToolNoteEl!: HTMLElement;
+  private defaultToolApplyBtn!: HTMLButtonElement;
+  private defaultToolConfirmBtn!: HTMLButtonElement;
+  private defaultToolCancelBtn!: HTMLButtonElement;
+  private defaultToolRestoreBtn!: HTMLButtonElement;
+  private defaultToolStatus: DefaultToolStatus | null = null;
+  private defaultToolMode: "idle" | "confirm" | "busy-apply" | "busy-restore" | "error" = "idle";
+  private defaultToolError = "";
   private diagBtn!: HTMLButtonElement;
   private diagFeedback!: HTMLElement;
   private lastFocus: HTMLElement | null = null;
@@ -628,6 +664,9 @@ export class SettingsPanel {
     this.paintCaps(this.hotkeyFullPreview, settings.hotkeyFull);
     this.paintCaps(this.hotkeyRegionPreview, settings.hotkeyRegion);
     this.paintHotkeyStatus(this.opts.getHotkeyStatus());
+    // The default-tool card reads the OS each time the panel refreshes —
+    // bindings can change outside the app (system settings, another tool).
+    void this.refreshDefaultTool();
   }
 
   /* ------------------------------------------------------------- internals */
@@ -686,7 +725,9 @@ export class SettingsPanel {
 
     const advice = portal || native
       ? ""
-      : `<p class="hotkey-note">Global hotkeys need a system service that accepts the binding: on Linux the <strong>Wayland GlobalShortcuts portal</strong> (KDE Plasma provides it; GNOME 46 and older do not), on Windows/macOS the OS hotkey registry (another app may already hold the combo). Without it, keep using PrintScreen inside the window, or add a shortcut in your desktop settings that runs <code>snagcraft --capture</code>.</p>`;
+      : this.defaultToolStatus?.isDefault
+        ? `<p class="hotkey-note">PrintScreen is routed to SnagCraft by your desktop's own keyboard shortcuts — manage this under <strong>Default screenshot tool</strong> below.</p>`
+        : `<p class="hotkey-note">Global hotkeys need a system service that accepts the binding: on Linux the <strong>Wayland GlobalShortcuts portal</strong> (KDE Plasma provides it; GNOME 46 and older do not), on Windows/macOS the OS hotkey registry (another app may already hold the combo). Without it, keep using PrintScreen inside the window, or add a shortcut in your desktop settings that runs <code>snagcraft --capture</code>.</p>`;
 
     el.innerHTML = `
       <div class="hotkey-backend">${backendLine}</div>
@@ -903,6 +944,19 @@ export class SettingsPanel {
               <span class="hotkey-format-hint">Format: <code>Print</code>, <code>SHIFT+Print</code>, <code>CTRL+SHIFT+P</code></span>
             </div>
             <div class="hotkey-status" id="settings-hotkey-status" data-state="off" role="status" aria-live="polite"></div>
+            <div class="default-tool" id="settings-default-tool" data-state="idle" hidden>
+              <div class="default-tool-head">
+                <span class="setting-label">Default screenshot tool</span>
+                <span class="default-tool-desktop" id="settings-default-tool-desktop"></span>
+              </div>
+              <p class="default-tool-note" id="settings-default-tool-note" role="status" aria-live="polite"></p>
+              <div class="default-tool-actions">
+                <button type="button" class="btn-secondary" id="settings-default-tool-apply">Make SnagCraft the default…</button>
+                <button type="button" class="btn-primary" id="settings-default-tool-confirm" hidden>Change keyboard settings</button>
+                <button type="button" class="btn-secondary" id="settings-default-tool-cancel" hidden>Cancel</button>
+                <button type="button" class="btn-secondary" id="settings-default-tool-restore" hidden>Restore system shortcuts</button>
+              </div>
+            </div>
           </section>
 
           <section class="setting" data-section="save">
@@ -1068,6 +1122,13 @@ export class SettingsPanel {
     this.hotkeyRegionPreview = root.querySelector<HTMLElement>("#hotkey-region-caps")!;
     this.hotkeyRegisterBtn = root.querySelector<HTMLButtonElement>("#settings-register-hotkeys")!;
     this.hotkeyStatusEl = root.querySelector<HTMLElement>("#settings-hotkey-status")!;
+    this.defaultToolEl = root.querySelector<HTMLElement>("#settings-default-tool")!;
+    this.defaultToolDesktopEl = root.querySelector<HTMLElement>("#settings-default-tool-desktop")!;
+    this.defaultToolNoteEl = root.querySelector<HTMLElement>("#settings-default-tool-note")!;
+    this.defaultToolApplyBtn = root.querySelector<HTMLButtonElement>("#settings-default-tool-apply")!;
+    this.defaultToolConfirmBtn = root.querySelector<HTMLButtonElement>("#settings-default-tool-confirm")!;
+    this.defaultToolCancelBtn = root.querySelector<HTMLButtonElement>("#settings-default-tool-cancel")!;
+    this.defaultToolRestoreBtn = root.querySelector<HTMLButtonElement>("#settings-default-tool-restore")!;
 
     for (const closer of Array.from(root.querySelectorAll<HTMLElement>("[data-close]"))) {
       closer.addEventListener("click", () => this.close());
@@ -1111,6 +1172,17 @@ export class SettingsPanel {
     });
 
     this.hotkeyRegisterBtn.addEventListener("click", () => void this.register());
+
+    this.defaultToolApplyBtn.addEventListener("click", () => {
+      this.defaultToolMode = "confirm";
+      this.paintDefaultTool();
+    });
+    this.defaultToolCancelBtn.addEventListener("click", () => {
+      this.defaultToolMode = "idle";
+      this.paintDefaultTool();
+    });
+    this.defaultToolConfirmBtn.addEventListener("click", () => void this.applyDefaultTool());
+    this.defaultToolRestoreBtn.addEventListener("click", () => void this.restoreDefaultTool());
 
     this.intervalSelect.addEventListener("change", () => {
       const parsed = Number(this.intervalSelect.value);
@@ -1291,6 +1363,123 @@ export class SettingsPanel {
       this.hotkeyRegisterBtn.textContent = label ?? "Register hotkeys";
       this.refresh();
     }
+  }
+
+  /* ------------------------------------------- default screenshot tool */
+
+  /** Re-read the OS state; the card hides itself when unsupported. */
+  private async refreshDefaultTool(): Promise<void> {
+    const get = this.opts.getDefaultToolStatus;
+    if (!get) {
+      this.defaultToolStatus = null;
+      this.paintDefaultTool();
+      return;
+    }
+    try {
+      this.defaultToolStatus = await get();
+    } catch {
+      this.defaultToolStatus = null;
+    }
+    this.paintDefaultTool();
+  }
+
+  /**
+   * Render the takeover card. Visible only on supported desktops where it
+   * matters: no global-hotkey backend, an active takeover, or a restore is
+   * possible. The confirmation step spells out every system change before
+   * anything is written.
+   */
+  private paintDefaultTool(): void {
+    const status = this.defaultToolStatus;
+    const backend = this.opts.getHotkeyStatus()?.backend ?? "none";
+    const visible =
+      !!status?.supported && (backend === "none" || status.isDefault || status.canRestore);
+    this.defaultToolEl.hidden = !visible;
+    if (!visible || !status) return;
+
+    this.defaultToolDesktopEl.textContent = status.desktop;
+    const mode = this.defaultToolMode;
+    const busy = mode === "busy-apply" || mode === "busy-restore";
+    const confirm = mode === "confirm";
+    const active = status.isDefault && !busy && mode !== "error" && !confirm;
+
+    this.defaultToolEl.dataset.state = active
+      ? "ok"
+      : mode === "error"
+        ? "warn"
+        : confirm
+          ? "confirm"
+          : "idle";
+
+    let note: string;
+    if (mode === "busy-apply") {
+      note = "Changing your desktop's keyboard settings…";
+    } else if (mode === "busy-restore") {
+      note = "Restoring your previous keyboard settings…";
+    } else if (mode === "error") {
+      note = `Could not change the keyboard settings: ${esc(this.defaultToolError)}`;
+    } else if (confirm) {
+      note =
+        `This changes your ${esc(status.desktop)} keyboard settings: the system's <kbd>Print</kbd> and ` +
+        `<kbd>Shift</kbd>+<kbd>Print</kbd> screenshot shortcuts are disabled, and two custom shortcuts ` +
+        `are added that run <code>${esc(status.command)} --capture</code> and ` +
+        `<code>${esc(status.command)} --region</code>. Other screenshot shortcuts ` +
+        `(Ctrl+Print…) keep going to the system tool. You can restore the previous settings at any time.`;
+    } else if (active) {
+      note =
+        "SnagCraft is the default screenshot tool — <kbd>Print</kbd> captures the full screen and " +
+        "<kbd>Shift</kbd>+<kbd>Print</kbd> a region, in any app. The shortcuts launch SnagCraft even when it isn't running.";
+    } else {
+      note =
+        `Your desktop keeps <kbd>Print</kbd> for its own screenshot tool, and no global-hotkey service is available here. ` +
+        "SnagCraft can take the keys over through the desktop's own keyboard settings.";
+    }
+    this.defaultToolNoteEl.innerHTML = note;
+
+    this.defaultToolApplyBtn.hidden = busy || confirm || active;
+    this.defaultToolConfirmBtn.hidden = !confirm;
+    this.defaultToolCancelBtn.hidden = !confirm;
+    this.defaultToolRestoreBtn.hidden = busy || confirm || !status.canRestore;
+    this.defaultToolApplyBtn.disabled = busy;
+    this.defaultToolConfirmBtn.disabled = busy;
+    this.defaultToolCancelBtn.disabled = busy;
+    this.defaultToolRestoreBtn.disabled = busy;
+  }
+
+  /** Confirmed takeover: clear the built-in bindings, add ours, keep a backup. */
+  private async applyDefaultTool(): Promise<void> {
+    const set = this.opts.setDefaultTool;
+    if (!set || this.defaultToolMode === "busy-apply") return;
+    this.defaultToolMode = "busy-apply";
+    this.paintDefaultTool();
+    try {
+      this.defaultToolStatus = await set();
+      this.defaultToolMode = "idle";
+      this.defaultToolError = "";
+    } catch (e) {
+      this.defaultToolMode = "error";
+      this.defaultToolError = e instanceof Error ? e.message : String(e);
+    }
+    this.paintDefaultTool();
+    this.paintHotkeyStatus(this.opts.getHotkeyStatus());
+  }
+
+  /** One-click undo: put every previous binding back exactly as it was. */
+  private async restoreDefaultTool(): Promise<void> {
+    const restore = this.opts.restoreDefaultTool;
+    if (!restore || this.defaultToolMode === "busy-restore") return;
+    this.defaultToolMode = "busy-restore";
+    this.paintDefaultTool();
+    try {
+      this.defaultToolStatus = await restore();
+      this.defaultToolMode = "idle";
+      this.defaultToolError = "";
+    } catch (e) {
+      this.defaultToolMode = "error";
+      this.defaultToolError = e instanceof Error ? e.message : String(e);
+    }
+    this.paintDefaultTool();
+    this.paintHotkeyStatus(this.opts.getHotkeyStatus());
   }
 
   private async resetFolder(): Promise<void> {

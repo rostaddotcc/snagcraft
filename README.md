@@ -101,7 +101,10 @@ share* flow in one lightweight app. SnagCraft fills that gap.
   anywhere, fixed size. Full / Region / a red **Rec** button; while a take runs the
   widget hides itself so it never lands in the video
 - Global hotkeys — the Wayland GlobalShortcuts portal on Linux (KDE), native
-  system hotkeys on Windows/macOS
+  system hotkeys on Windows/macOS. On Cinnamon (Linux Mint) and GNOME, where no
+  portal exists, **Settings → Global hotkeys → Default screenshot tool** can hand
+  the `Print` / `Shift+Print` keys to SnagCraft through the desktop's own keyboard
+  settings — with a one-click restore of the previous bindings
 - Light / dark themes, and a "save before closing?" guard
 
 ## Shortcuts
@@ -122,6 +125,11 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 | `Ctrl` / `Cmd` + `,` | Settings |
 | `Delete` / `Backspace` | Delete the selected annotation |
 | `Esc` | Cancel / deselect / close |
+
+`PrintScreen` works while the SnagCraft window has focus. To make it work in any
+app: KDE uses the GlobalShortcuts portal, Windows/macOS register native hotkeys,
+and Cinnamon/GNOME offer the **Default screenshot tool** takeover in Settings →
+Global hotkeys (or add a desktop shortcut that runs `snagcraft --capture`).
 
 ## 🐛 Bugs, ideas & feedback
 

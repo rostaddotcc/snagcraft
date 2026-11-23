@@ -4,6 +4,17 @@ All notable changes to SnagCraft, newest first. Full release notes for every tag
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
 ## v1.5.5 (unreleased)
+- **SnagCraft can become the default screenshot tool on Linux Mint (Cinnamon) and
+  GNOME.** Where no GlobalShortcuts portal exists, the desktop itself keeps the
+  `Print` / `Shift+Print` keys for its own screenshot app. Settings → Global
+  hotkeys → **Default screenshot tool** now offers to take the keys over through
+  the desktop's own keyboard settings: the built-in screenshot bindings are
+  disabled and two custom shortcuts run `snagcraft --capture` / `--region` —
+  working in any app, even when SnagCraft isn't running. The change is spelled
+  out before it happens, every previous binding is backed up, and **Restore
+  system shortcuts** puts everything back exactly as it was. KDE (portal) and
+  Windows/macOS (native hotkeys) are unchanged; other Linux desktops get an
+  honest note with the manual recipe.
 - **Redrawn speech bubble (Callout).** The balloon is now one continuous outline with the
   tail cut into the bottom edge — no more seam where a separate triangle was stacked under
   the body. Corner radius, padding, tail size and outline weight scale with the balloon, the

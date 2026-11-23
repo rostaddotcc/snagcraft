@@ -26,6 +26,7 @@ import {
   type ExportFormat,
   type ExportSettings,
   type RecFormat,
+  type DefaultToolStatus,
   type HotkeyBackend,
   type HotkeyStatus,
   type Theme,
@@ -1651,6 +1652,26 @@ export function mountApp(root: HTMLElement): void {
           .map((entry) => ({ id: String(entry.id), trigger: String(entry.trigger ?? "") }))
       : [];
     return { backend, granted };
+  }
+
+  /** Defensive read of the default-screenshot-tool payload. */
+  function normalizeDefaultTool(raw: unknown): DefaultToolStatus {
+    const src = (raw ?? {}) as {
+      supported?: unknown;
+      desktop?: unknown;
+      isDefault?: unknown;
+      canRestore?: unknown;
+      command?: unknown;
+      detail?: unknown;
+    };
+    return {
+      supported: src.supported === true,
+      desktop: typeof src.desktop === "string" ? src.desktop : "",
+      isDefault: src.isDefault === true,
+      canRestore: src.canRestore === true,
+      command: typeof src.command === "string" ? src.command : "",
+      detail: typeof src.detail === "string" ? src.detail : "",
+    };
   }
 
   /** Bind (or unbind) the configured shortcuts; returns the live status. */
@@ -5069,6 +5090,14 @@ export function mountApp(root: HTMLElement): void {
     // LaunchAgent on macOS). The panel only ever sees these two callbacks.
     getAutostart: () => autostartIsEnabled(),
     setAutostart: (enabled) => (enabled ? autostartEnable() : autostartDisable()),
+    // Default screenshot tool (Linux Cinnamon/GNOME): the backend clears the
+    // desktop's own Print/Shift+Print bindings and adds custom shortcuts that
+    // run the single-instance CLI. The panel owns confirmation + restore UI.
+    getDefaultToolStatus: async () => normalizeDefaultTool(await invoke("default_tool_status")),
+    setDefaultTool: async () =>
+      normalizeDefaultTool(await invoke("set_default_screenshot_tool")),
+    restoreDefaultTool: async () =>
+      normalizeDefaultTool(await invoke("restore_default_screenshot_tool")),
   });
 
   guardSaveBtn.addEventListener("click", () => void onGuardSave());

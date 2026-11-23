@@ -2,6 +2,7 @@ mod capture;
 mod cli;
 mod clipboard;
 mod commands;
+mod default_tool;
 mod export;
 mod hotkeys;
 mod ocr;
@@ -106,6 +107,11 @@ pub fn run() {
             hotkeys::register_hotkeys,
             hotkeys::get_hotkey_status,
             hotkeys::unregister_hotkeys,
+            // Default-screenshot-tool takeover on Cinnamon/GNOME (gsettings),
+            // with backup + restore — the fallback where no portal exists.
+            default_tool::default_tool_status,
+            default_tool::set_default_screenshot_tool,
+            default_tool::restore_default_screenshot_tool,
             // Wave 7: grab text (tesseract)
             ocr::ocr_image,
             ocr::ocr_available,
