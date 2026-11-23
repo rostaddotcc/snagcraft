@@ -43,6 +43,10 @@ pub fn run() {
             cli::dispatch(app, &req);
         }))
         .plugin(tauri_plugin_dialog::init())
+        // In-app updates (File → Check for updates… → Update now). The plugin
+        // verifies every artifact against the pubkey in tauri.conf.json before
+        // it touches the AppImage; the check itself is `update.rs`.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // Launch-at-login (Settings → General). Linux uses XDG autostart and
         // resolves the AppImage path via $APPIMAGE, so the .desktop entry keeps
         // pointing at the real file, not the temporary FUSE mount.
@@ -132,6 +136,9 @@ pub fn run() {
             upload::open_url,
             // File → Check for updates…: newest published GitHub release
             update::check_for_update,
+            update::update_can_install,
+            update::install_update,
+            update::restart_app,
             // Wave 9: scrolling capture (manual-scroll stitch)
             scrolling::scrolling_start,
             scrolling::scrolling_done,

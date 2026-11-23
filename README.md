@@ -107,9 +107,11 @@ share* flow in one lightweight app. SnagCraft fills that gap.
   settings — with a one-click restore of the previous bindings
 - Light / dark themes, and a "save before closing?" guard
 - **Check for updates** — File → Check for updates… asks GitHub for the newest
-  release and links to it; a quiet once-a-day check leaves a small dot in the
-  File menu (Settings → General can switch it off). Nothing is downloaded or
-  installed behind your back
+  release and can install it in place (*Update now* → progress → *Restart now*,
+  signature-verified, with an unsaved-work guard). A quiet once-a-day check
+  leaves a small dot in the File menu (Settings → General can switch it off).
+  A `.deb` install updates through the package manager and gets the release
+  page instead
 
 ## Shortcuts
 

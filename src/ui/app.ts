@@ -1273,7 +1273,7 @@ export function mountApp(root: HTMLElement): void {
       </div>
     </div>
     <div class="modal-backdrop" id="update-modal" hidden>
-      <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="update-title" aria-describedby="update-desc" tabindex="-1">
+      <div class="modal modal-sm update-modal" role="dialog" aria-modal="true" aria-labelledby="update-title" aria-describedby="update-desc" tabindex="-1">
         <header class="modal-head">
           <div class="modal-heading">
             <h2 class="modal-title" id="update-title">Update available</h2>
@@ -1285,12 +1285,20 @@ export function mountApp(root: HTMLElement): void {
           <p class="update-versions"><span class="update-now" id="update-latest">—</span> <span class="update-was">you have <span id="update-current">—</span></span></p>
           <p class="update-release-title" id="update-release-title" hidden></p>
           <p class="update-notes" id="update-notes" hidden></p>
+          <p class="update-install-note" id="update-install-note" hidden></p>
+          <div class="update-progress" id="update-progress" hidden>
+            <div class="update-bar" id="update-bar" role="progressbar" aria-label="Update download" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="update-bar-fill" id="update-bar-fill"></span></div>
+            <span class="update-progress-text" id="update-progress-text" role="status" aria-live="polite"></span>
+          </div>
+          <p class="update-feedback" id="update-feedback" role="status" aria-live="polite" hidden></p>
         </div>
         <footer class="modal-foot update-foot">
           <button type="button" class="btn-secondary" id="update-skip">Skip this version</button>
           <div class="guard-actions">
             <button type="button" class="btn-secondary" id="update-later">Later</button>
-            <button type="button" class="btn-primary" id="update-open">Open the release page</button>
+            <button type="button" class="btn-secondary" id="update-open">Release notes</button>
+            <button type="button" class="btn-primary" id="update-now" hidden>Update now</button>
+            <button type="button" class="btn-primary" id="update-restart" hidden>Restart now</button>
           </div>
         </footer>
       </div>
@@ -5585,6 +5593,27 @@ export function mountApp(root: HTMLElement): void {
   let shownUpdate: UpdateInfo | null = null;
   let checkingUpdates = false;
 
+  // In-place install (Tauri's signed updater): dialog pieces + a tiny state
+  // machine. `canInstallUpdate` is false for .deb installs and anything that
+  // isn't an AppImage, where the button would have nothing to write to.
+  const updateBarEl = document.getElementById("update-bar");
+  const updateBarFillEl = document.getElementById("update-bar-fill");
+  const updateProgressEl = document.getElementById("update-progress");
+  const updateProgressTextEl = document.getElementById("update-progress-text");
+  const updateFeedbackEl = document.getElementById("update-feedback");
+  const updateInstallNoteEl = document.getElementById("update-install-note");
+  const updateNowBtn = $<HTMLButtonElement>("#update-now");
+  const updateRestartBtn = $<HTMLButtonElement>("#update-restart");
+  const updateLaterBtn = $<HTMLButtonElement>("#update-later");
+  const updateSkipBtn = $<HTMLButtonElement>("#update-skip");
+  const updateOpenBtn = $<HTMLButtonElement>("#update-open");
+  /** Rust event carrying download progress (src-tauri/src/update.rs). */
+  const UPDATE_PROGRESS_EVENT = "snagcraft-update-progress";
+  type UpdatePhase = "available" | "downloading" | "installed" | "failed";
+  let updatePhase: UpdatePhase = "available";
+  let canInstallUpdate = false;
+  let progressPct = 0;
+
   const bareVersion = (value: string): string => value.replace(/^v/i, "");
   const skippedVersion = (): string => readStore(SKIPPED_VERSION_KEY) ?? "";
 
@@ -5631,11 +5660,16 @@ export function mountApp(root: HTMLElement): void {
       const el = document.getElementById(id);
       if (el) el.textContent = text;
     };
+    updatePhase = "available";
+    progressPct = 0;
     set("update-latest", `v${info.latest}`);
     set("update-current", `v${info.current}`);
+    set("update-title", "Update available");
     set(
       "update-desc",
-      `SnagCraft v${info.latest} has been published. Nothing was downloaded — grab it from the release page.`,
+      canInstallUpdate
+        ? "SnagCraft can download and install it here — or open the release page."
+        : "A newer SnagCraft has been published.",
     );
     // The release title usually repeats the tag; keep only the description.
     const headline = info.title.replace(/^\s*v?\d+(?:\.\d+)*\s*[—–-]?\s*/i, "").trim();
@@ -5645,13 +5679,127 @@ export function mountApp(root: HTMLElement): void {
     set("update-notes", info.notes);
     const notesEl = document.getElementById("update-notes");
     if (notesEl) notesEl.hidden = info.notes === "";
-    // A skipped version is still shown when the user asks for it.
+    if (updateInstallNoteEl) {
+      updateInstallNoteEl.hidden = canInstallUpdate;
+      updateInstallNoteEl.textContent = canInstallUpdate
+        ? ""
+        : "This build can't replace itself (installed as a system package) — grab the new version from the release page.";
+    }
+    setUpdateFeedback("", "info");
+    paintUpdateDialog();
     if (!updateModalEl.hidden) return;
     updateModalEl.hidden = false;
     void updateModalEl.offsetWidth;
     updateModalEl.classList.add("is-open");
     updateModalEl.querySelector<HTMLElement>(".modal")?.focus({ preventScroll: true });
   }
+
+  /** Show a line under the dialog body (errors, hints). */
+  function setUpdateFeedback(message: string, kind: "info" | "error"): void {
+    if (!updateFeedbackEl) return;
+    updateFeedbackEl.textContent = message;
+    updateFeedbackEl.hidden = message === "";
+    updateFeedbackEl.dataset.kind = kind;
+  }
+
+  /** Buttons + progress follow one small state machine. */
+  function paintUpdateDialog(): void {
+    const busy = updatePhase === "downloading";
+    const installed = updatePhase === "installed";
+    if (updateNowBtn) {
+      updateNowBtn.hidden = !canInstallUpdate || busy || installed;
+      updateNowBtn.disabled = busy;
+      updateNowBtn.textContent = "Update now";
+    }
+    if (updateRestartBtn) updateRestartBtn.hidden = !installed;
+    if (updateLaterBtn) {
+      updateLaterBtn.hidden = installed;
+      updateLaterBtn.disabled = busy;
+    }
+    if (updateSkipBtn) {
+      updateSkipBtn.hidden = busy || installed;
+      updateSkipBtn.disabled = busy;
+    }
+    if (updateOpenBtn) {
+      updateOpenBtn.textContent = canInstallUpdate ? "Release notes" : "Open the release page";
+      updateOpenBtn.disabled = busy;
+    }
+    if (updateProgressEl) updateProgressEl.hidden = !busy && !installed;
+    if (updateBarEl) updateBarEl.setAttribute("aria-valuenow", String(Math.round(progressPct)));
+    if (updateBarFillEl) updateBarFillEl.style.width = `${progressPct}%`;
+    if (updateProgressTextEl && !busy && installed) {
+      updateProgressTextEl.textContent = "Installed — restart SnagCraft to use it.";
+    }
+  }
+
+  const megabytes = (bytes: number): string => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+  /** Download + install through Tauri's signed updater. */
+  async function startUpdateInstall(): Promise<void> {
+    if (!canInstallUpdate || updatePhase === "downloading") return;
+    updatePhase = "downloading";
+    progressPct = 0;
+    setUpdateFeedback("", "info");
+    paintUpdateDialog();
+    if (updateProgressTextEl) updateProgressTextEl.textContent = "Starting the download…";
+    try {
+      const version = await invoke<string>("install_update");
+      updatePhase = "installed";
+      progressPct = 100;
+      const latestEl = document.getElementById("update-latest");
+      if (latestEl) latestEl.textContent = `v${version}`;
+      const titleEl = document.getElementById("update-title");
+      if (titleEl) titleEl.textContent = "Update installed";
+      const desc = document.getElementById("update-desc");
+      if (desc) desc.textContent = `SnagCraft v${version} is installed. Restart to use it.`;
+      paintUpdateDialog();
+      setStatus(`SnagCraft v${version} is installed — restart to use it.`, "success");
+      // The offered update is now on disk; the marker would only repeat itself.
+      try {
+        localStorage.removeItem(UPDATE_AVAILABLE_KEY);
+      } catch {
+        /* storage unavailable — the marker just stays until restart */
+      }
+      markUpdate(null);
+      if (updateHintEl) updateHintEl.textContent = "restart";
+    } catch (e) {
+      updatePhase = "failed";
+      const message = errText(e);
+      setUpdateFeedback(message, "error");
+      paintUpdateDialog();
+      setStatus(`The update did not install: ${message}`, "error");
+    }
+  }
+
+  /** Restart into the installed build — after the unsaved-work check. */
+  function restartIntoUpdate(): void {
+    if (hasImage && isDirty()) {
+      const message = "You have unsaved annotations. Save them (Ctrl+S), then press Restart now again.";
+      setUpdateFeedback(message, "error");
+      setStatus("Save your capture first — then restart to finish the update.", "error");
+      return;
+    }
+    void invoke("restart_app").catch((e: unknown) =>
+      setStatus(`Could not restart: ${errText(e)}`, "error"),
+    );
+  }
+
+  if (updateNowBtn) updateNowBtn.addEventListener("click", () => void startUpdateInstall());
+  if (updateRestartBtn) updateRestartBtn.addEventListener("click", restartIntoUpdate);
+
+  // Progress while the artifact downloads (emitted by `install_update`).
+  void listen<{ downloaded: number; total: number | null }>(UPDATE_PROGRESS_EVENT, (event) => {
+    if (updatePhase !== "downloading") return;
+    const { downloaded, total } = event.payload;
+    const known = typeof total === "number" && total > 0;
+    progressPct = known ? Math.min(100, (downloaded / (total as number)) * 100) : 0;
+    if (updateProgressTextEl) {
+      updateProgressTextEl.textContent = known
+        ? `Downloading ${megabytes(downloaded)} of ${megabytes(total as number)} — ${Math.round(progressPct)} %`
+        : `Downloading ${megabytes(downloaded)}…`;
+    }
+    paintUpdateDialog();
+  });
 
   function closeUpdateModal(): void {
     if (updateModalEl.hidden) return;
@@ -6317,6 +6465,9 @@ export function mountApp(root: HTMLElement): void {
     applyWatermark();
     await ensureSaveDir();
     void refreshRecentFromFolder();
+    // Whether this install can replace itself (AppImage) or must point at the
+    // release page (.deb). Read once, before any dialog can open.
+    canInstallUpdate = await invoke<boolean>("update_can_install").catch(() => false);
     // Quiet, once a day at most: leaves a marker in the File menu, never a modal.
     maybeCheckForUpdates();
   })();

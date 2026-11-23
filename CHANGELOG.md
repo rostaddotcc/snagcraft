@@ -3,6 +3,23 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.5.7
+- **Update now.** The update dialog installs the new build for you: *Update now*
+  downloads the signed AppImage with a live progress bar (size and percentage),
+  verifies the minisign signature against the key baked into the app, swaps the
+  running file in place and then offers **Restart now** — which first refuses if
+  the editor has unsaved annotations, so nothing is lost. If the download or the
+  signature check fails, the old build stays untouched and the dialog says what
+  went wrong; the release page is still one click away.
+- **Signed releases.** Every tag now publishes `.sig` files next to the bundles
+  plus a `latest.json` (version, notes, per-platform signature and URL) that the
+  updater polls. An artifact that does not match the signing key is never
+  installed — the whole install path is covered by a test that serves a forged
+  artifact and proves the running build is left exactly as it was.
+- **Package installs stay honest.** A `.deb` (or `.rpm`) SnagCraft updates
+  through the package manager, so the dialog offers the release page instead of
+  a button that would fail.
+
 ## v1.5.6
 - **Check for updates.** File → **Check for updates…** asks GitHub for the newest
   release and, when there is one, says which version it is with a link to its

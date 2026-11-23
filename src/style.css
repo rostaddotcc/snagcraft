@@ -5138,6 +5138,19 @@ body.countdown-hud .countdown-card {
   padding-top: 0;
 }
 
+/* `.btn-primary`/`.btn-secondary` set `display: inline-flex`, which outranks
+   the UA `[hidden] { display: none }` rule — without this, a hidden footer
+   button (Update now / Restart now / Skip) stays on screen. */
+.update-foot [hidden] {
+  display: none !important;
+}
+
+/* Four buttons + two words of version text need a little more room than the
+   430 px `modal-sm` gives. */
+.update-modal {
+  width: min(520px, 100%);
+}
+
 .update-versions {
   margin: 0;
   font-size: 15px;
@@ -5169,6 +5182,66 @@ body.countdown-hud .countdown-card {
 .update-release-title[hidden],
 .update-notes[hidden] {
   display: none;
+}
+
+/* In-place update: package note, progress bar and error line. */
+.update-install-note,
+.update-feedback {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+.update-install-note[hidden],
+.update-feedback[hidden] {
+  display: none;
+}
+
+.update-feedback[data-kind="error"] {
+  color: var(--danger);
+}
+
+.update-progress {
+  display: grid;
+  gap: 6px;
+}
+
+.update-progress[hidden] {
+  display: none;
+}
+
+.update-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  overflow: hidden;
+}
+
+.update-bar-fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-solid);
+  transition: width 140ms linear;
+}
+
+.update-progress-text {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+/* Four buttons at most: let the footer wrap on a narrow window. */
+.update-foot {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+/* With "Skip this version" hidden (installed state) the group must still sit on
+   the right instead of collapsing to the left edge. */
+.update-foot .guard-actions {
+  margin-left: auto;
 }
 
 /* ------------------------------------------- Shapes picker */

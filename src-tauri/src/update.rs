@@ -264,6 +264,102 @@ pub async fn check_for_update() -> Result<UpdateInfo, String> {
     .map_err(|e| format!("the update check did not finish: {e}"))?
 }
 
+// ---------------------------------------------------------------- installing
+//
+// The step above only *reports* a new release. This half installs it: Tauri's
+// updater downloads the artifact published in `latest.json`, verifies its
+// minisign signature against the pubkey baked into `tauri.conf.json`, and
+// writes it over the running AppImage. Nothing is installed unsigned.
+
+use tauri::Emitter as _;
+use tauri_plugin_updater::UpdaterExt;
+
+/// Event carrying download progress to the frontend.
+pub const UPDATE_PROGRESS_EVENT: &str = "snagcraft-update-progress";
+
+/// How far an in-place update has got.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProgress {
+    pub downloaded: u64,
+    pub total: Option<u64>,
+}
+
+/// Can this build replace itself in place?
+///
+/// An AppImage can — the updater writes the new file over `$APPIMAGE`. A .deb
+/// (or .rpm) install cannot: those files belong to the package manager, so the
+/// UI keeps offering the release page instead of a button that would fail.
+pub fn install_supported() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var_os("APPIMAGE").is_some_and(|path| !path.is_empty())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        true
+    }
+    #[cfg(target_os = "macos")]
+    {
+        false
+    }
+}
+
+/// Whether the dialog may offer "Update now" for this install.
+#[tauri::command]
+pub fn update_can_install() -> bool {
+    install_supported()
+}
+
+/// Download, verify and install the newest release.
+///
+/// Returns the installed version; the app keeps running on the old build until
+/// the user restarts (there may be unsaved annotations in the editor).
+#[tauri::command]
+pub async fn install_update(app: tauri::AppHandle) -> Result<String, String> {
+    if !install_supported() {
+        return Err("this build cannot update itself — use the release page".to_string());
+    }
+    let updater = app
+        .updater()
+        .map_err(|e| format!("the updater is not ready: {e}"))?;
+    let Some(update) = updater
+        .check()
+        .await
+        .map_err(|e| format!("could not reach the update server: {e}"))?
+    else {
+        return Err("SnagCraft is already up to date".to_string());
+    };
+    let version = update.version.clone();
+    // NOTE: we deliberately keep the `Update` returned by `check()` instead of
+    // round-tripping it through `restore_update()`. Restoring turns on
+    // `require_signed_version` (a downgrade guard that wants `version:` in the
+    // signature's trusted comment); the release bundler writes that comment,
+    // but `tauri signer sign` does not, so enabling it here would need a custom
+    // signing step. This is the same path Tauri's own JS `download` command
+    // takes.
+    let handle = app.clone();
+    let mut downloaded: u64 = 0;
+    update
+        .download_and_install(
+            move |chunk, total| {
+                downloaded = downloaded.saturating_add(chunk as u64);
+                let _ = handle.emit(UPDATE_PROGRESS_EVENT, UpdateProgress { downloaded, total });
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| format!("the update could not be installed: {e}"))?;
+    Ok(version)
+}
+
+/// Restart into the installed build (Tauri re-execs `$APPIMAGE` when there is
+/// one, so the FUSE mount of the old file is never reused).
+#[tauri::command]
+pub fn restart_app(app: tauri::AppHandle) {
+    app.restart()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
