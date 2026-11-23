@@ -3,7 +3,7 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
-## v1.5.5 (unreleased)
+## v1.5.5
 - **SnagCraft can become the default screenshot tool on Linux Mint (Cinnamon) and
   GNOME.** Where no GlobalShortcuts portal exists, the desktop itself keeps the
   `Print` / `Shift+Print` keys for its own screenshot app. Settings → Global
@@ -36,6 +36,11 @@ the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 - **Frame-preview fallback.** If the platform's webview has no decoder for the clip's codec
   (bare WebKitGTK without `gst-libav`, for example), the player steps real ffmpeg frames with
   the same draggable timeline instead of failing — and says so in one line.
+- **The floating widget ("flärp") is real glass now.** The wallpaper visibly bleeds through
+  the blur instead of an opaque sticker: a full-height ribbon spine flush with the edge, the
+  unicorn mark optically centred, a tighter contact shadow, and a recording breath that keeps
+  a red halo so a take stays visible even on red/orange wallpapers. The expanded pill gets the
+  same glass treatment, equal-height buttons and a clearer double-chevron fold icon.
 
 ## v1.5.4
 - **Multi-monitor capture — issue #1 (Windows/macOS).** Capture → **Choose screen** now lists
