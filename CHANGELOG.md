@@ -3,7 +3,7 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
-## Unreleased
+## v1.5.6
 - **Check for updates.** File → **Check for updates…** asks GitHub for the newest
   release and, when there is one, says which version it is with a link to its
   release page. A quiet once-a-day check also runs at startup and only leaves a
