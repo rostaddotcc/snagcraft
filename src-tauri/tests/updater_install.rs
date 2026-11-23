@@ -191,3 +191,87 @@ fn a_tampered_artifact_is_refused_and_the_appimage_is_untouched() {
         "the running build must be left exactly as it was"
     );
 }
+
+/// The real thing: the published manifest, the published artifact and the
+/// release key from `tauri.conf.json`, downloaded from GitHub.
+///
+/// Ignored by default (it pulls ~85 MB from the network). Run it after a tag:
+///
+/// ```text
+/// cargo test --test updater_install -- --ignored --nocapture live_update
+/// ```
+///
+/// The version comparator is forced to "always take the remote release" because
+/// this test usually runs from the same version it would download; whether a
+/// release counts as newer is covered by the unit tests in `src/update.rs`.
+#[test]
+#[ignore = "downloads the published release from GitHub"]
+fn live_update_installs_the_published_release() {
+    let raw = std::fs::read_to_string("tauri.conf.json").expect("tauri.conf.json");
+    let config: serde_json::Value = serde_json::from_str(&raw).expect("valid config");
+    let updater = &config["plugins"]["updater"];
+    let pubkey = updater["pubkey"]
+        .as_str()
+        .expect("plugins.updater.pubkey")
+        .to_string();
+    let endpoint = updater["endpoints"][0]
+        .as_str()
+        .expect("plugins.updater.endpoints[0]")
+        .to_string();
+    println!("endpoint: {endpoint}");
+
+    let (_dir, installed) = installed_appimage();
+    let app = mock_app();
+    let updater = app
+        .updater_builder()
+        .pubkey(pubkey)
+        .endpoints(vec![endpoint.parse().expect("endpoint url")])
+        .expect("https endpoint")
+        .executable_path(&installed)
+        .target("linux-x86_64")
+        .timeout(Duration::from_secs(300))
+        .version_comparator(|_current, _remote| true)
+        .build()
+        .expect("updater");
+
+    let found = tauri::async_runtime::block_on(updater.check())
+        .expect("check against GitHub")
+        .expect("a release is published");
+    println!(
+        "announced {} (this build is {})",
+        found.version, found.current_version
+    );
+
+    // `on_chunk(chunk_len, content_length)`: the first argument is the size of
+    // the chunk just received, not a running total — the same contract
+    // `update.rs` accumulates against before emitting progress.
+    let mut downloaded: u64 = 0;
+    let mut total: Option<u64> = None;
+    tauri::async_runtime::block_on(found.download_and_install(
+        |chunk, len| {
+            downloaded += chunk as u64;
+            total = len;
+        },
+        || {},
+    ))
+    .expect("download, verify and install the published release");
+
+    let meta = std::fs::metadata(&installed).expect("metadata");
+    println!(
+        "installed {} bytes ({} announced), mode {:o}",
+        meta.len(),
+        total.map(|t| t.to_string()).unwrap_or_else(|| "?".into()),
+        meta.permissions().mode() & 0o777
+    );
+    assert!(
+        meta.len() > 60_000_000,
+        "expected the real AppImage, got {} bytes",
+        meta.len()
+    );
+    assert!(
+        downloaded > 60_000_000,
+        "progress reported {downloaded} bytes"
+    );
+    assert_eq!(Some(meta.len()), total, "every announced byte must arrive");
+    assert_eq!(meta.permissions().mode() & 0o777, 0o755);
+}
