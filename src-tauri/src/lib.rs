@@ -14,6 +14,7 @@ mod recording;
 mod scrolling;
 mod timelapse;
 mod tray;
+mod update;
 mod upload;
 mod windows;
 
@@ -129,6 +130,8 @@ pub fn run() {
             // Wave 25: generic upload + opening the returned link
             upload::upload_image,
             upload::open_url,
+            // File → Check for updates…: newest published GitHub release
+            update::check_for_update,
             // Wave 9: scrolling capture (manual-scroll stitch)
             scrolling::scrolling_start,
             scrolling::scrolling_done,

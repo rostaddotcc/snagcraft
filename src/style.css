@@ -4893,6 +4893,10 @@ kbd {
   right: auto;
   transform-origin: top left;
   min-width: 224px;
+  /* Ten rows now — on a short window the menu must scroll instead of running
+     past the bottom edge, where the last entries would be unreachable. */
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
 }
 
 .menu-icon-rec {
@@ -5107,6 +5111,64 @@ body.countdown-hud .countdown-card {
 
 .about-foot {
   justify-content: flex-end;
+}
+
+/* --------------------------------------------- File → Check for updates… */
+
+/* "A newer release exists" — a 6 px dot in the menu's check gutter. */
+.update-dot {
+  display: block;
+  width: 6px;
+  height: 6px;
+  margin: 0 auto;
+  border-radius: 999px;
+  background: var(--accent-solid);
+}
+
+.update-dot[hidden] {
+  display: none;
+}
+
+.menu-item.has-update .menu-label {
+  font-weight: 600;
+}
+
+.update-body {
+  gap: 8px;
+  padding-top: 0;
+}
+
+.update-versions {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  color: var(--accent-strong);
+}
+
+.update-versions .update-was {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+
+.update-release-title {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.update-notes {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--fg-muted);
+}
+
+.update-release-title[hidden],
+.update-notes[hidden] {
+  display: none;
 }
 
 /* ------------------------------------------- Shapes picker */

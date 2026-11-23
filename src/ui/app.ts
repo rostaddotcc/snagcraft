@@ -14,7 +14,10 @@ import { TextBar, type TextTarget } from "./textbar";
 import {
   DEFAULT_INTERVAL,
   DEFAULT_PATTERN,
+  LAST_UPDATE_CHECK_KEY,
+  SKIPPED_VERSION_KEY,
   SettingsPanel,
+  UPDATE_CHECK_INTERVAL_MS,
   applyTheme,
   buildFilename,
   expandPattern,
@@ -33,6 +36,20 @@ import {
 } from "./settings";
 
 type CaptureResult = { dataUrl: string; width: number; height: number };
+/**
+ * Newest published release, as answered by the `check_for_update` command
+ * (src-tauri/src/update.rs). Nothing is downloaded — the UI links to the page.
+ */
+interface UpdateInfo {
+  current: string;
+  latest: string;
+  newer: boolean;
+  title: string;
+  url: string;
+  notes: string;
+}
+/** Remembered "a newer release exists" answer, so a restart needs no request. */
+const UPDATE_AVAILABLE_KEY = "snagcraft:update-available";
 /** One connected display, as reported by the backend (issue #1). */
 type MonitorInfo = {
   name: string;
@@ -266,6 +283,10 @@ const ICONS = {
   ),
   external: icon(
     `<path d="M9.4 2.6h4v4"/><path d="M13.4 2.6 8 8"/><path d="M11.6 9.6v2.6a1.2 1.2 0 0 1-1.2 1.2H3.8a1.2 1.2 0 0 1-1.2-1.2V5.6a1.2 1.2 0 0 1 1.2-1.2h2.6"/>`,
+  ),
+  // File → Check for updates… (a circular arrow; no glyph dependency).
+  refresh: icon(
+    `<path d="M13.2 8a5.2 5.2 0 1 1-1.6-3.8"/><path d="M13.4 2.3v3h-3"/>`,
   ),
 };
 
@@ -844,6 +865,7 @@ export function mountApp(root: HTMLElement): void {
             <button type="button" class="menu-item" data-file="settings" title="All settings"><span class="menu-icon">${ICONS.settings}</span><span class="menu-label">Settings…</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+,</kbd></button>
             <button type="button" class="menu-item" data-file="widget" role="menuitemcheckbox" aria-checked="false" title="Show or hide the floating capture widget"><span class="menu-icon">${ICONS.widget}</span><span class="menu-label">Floating widget</span><span class="menu-check">${ICONS.check}</span><span class="menu-key-space" aria-hidden="true"></span></button>
             <div class="menu-sep" role="separator" aria-hidden="true"></div>
+            <button type="button" class="menu-item" data-file="update" title="Ask GitHub whether a newer version has been published"><span class="menu-icon">${ICONS.refresh}</span><span class="menu-label">Check for updates…</span><span class="menu-check"><span class="update-dot" id="update-dot" hidden></span></span><kbd class="menu-key" id="update-menu-hint"></kbd></button>
             <button type="button" class="menu-item" data-file="about" title="Version, license and repository"><span class="menu-icon">${ICONS.help}</span><span class="menu-label">About</span><span class="menu-check"></span><kbd class="menu-key" id="about-menu-version"></kbd></button>
           </div>
         </div>
@@ -1247,6 +1269,29 @@ export function mountApp(root: HTMLElement): void {
         </div>
         <footer class="modal-foot about-foot">
           <button type="button" class="btn-primary" id="about-ok">OK</button>
+        </footer>
+      </div>
+    </div>
+    <div class="modal-backdrop" id="update-modal" hidden>
+      <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="update-title" aria-describedby="update-desc" tabindex="-1">
+        <header class="modal-head">
+          <div class="modal-heading">
+            <h2 class="modal-title" id="update-title">Update available</h2>
+            <p class="modal-desc" id="update-desc">A newer SnagCraft has been published.</p>
+          </div>
+          <button type="button" class="icon-btn modal-x" id="update-close" aria-label="Close" title="Close (Esc)">${ICONS.close}</button>
+        </header>
+        <div class="modal-body update-body">
+          <p class="update-versions"><span class="update-now" id="update-latest">—</span> <span class="update-was">you have <span id="update-current">—</span></span></p>
+          <p class="update-release-title" id="update-release-title" hidden></p>
+          <p class="update-notes" id="update-notes" hidden></p>
+        </div>
+        <footer class="modal-foot update-foot">
+          <button type="button" class="btn-secondary" id="update-skip">Skip this version</button>
+          <div class="guard-actions">
+            <button type="button" class="btn-secondary" id="update-later">Later</button>
+            <button type="button" class="btn-primary" id="update-open">Open the release page</button>
+          </div>
         </footer>
       </div>
     </div>
@@ -1828,6 +1873,12 @@ export function mountApp(root: HTMLElement): void {
           settings.autoSave
             ? "Auto-save on — every capture is written to the save folder"
             : "Auto-save off — new captures stay in the editor until you save them",
+        );
+      } else if (patch.checkUpdates !== undefined) {
+        setStatus(
+          settings.checkUpdates
+            ? "SnagCraft will check GitHub once a day for a newer release"
+            : "Automatic update checks off — File → Check for updates… still works",
         );
       }
     }
@@ -5098,6 +5149,9 @@ export function mountApp(root: HTMLElement): void {
       normalizeDefaultTool(await invoke("set_default_screenshot_tool")),
     restoreDefaultTool: async () =>
       normalizeDefaultTool(await invoke("restore_default_screenshot_tool")),
+    // File → Check for updates… without the menu: same backend command, and the
+    // panel gets the one-line answer for its inline note.
+    checkForUpdates: () => checkForUpdates(true),
   });
 
   guardSaveBtn.addEventListener("click", () => void onGuardSave());
@@ -5217,6 +5271,11 @@ export function mountApp(root: HTMLElement): void {
           break;
         case "about":
           openAbout();
+          break;
+        case "update":
+          void checkForUpdates(true).catch(() => {
+            /* status line already explains it */
+          });
           break;
       }
     });
@@ -5511,6 +5570,177 @@ export function mountApp(root: HTMLElement): void {
       ev.preventDefault();
       ev.stopPropagation();
       closeAbout();
+    }
+  });
+
+  // ------------------------------------- check for updates (File menu + daily)
+  // The backend asks GitHub for the newest published release. Nothing is ever
+  // downloaded by itself: an automatic check leaves a marker in the File menu,
+  // and the dialog only offers the release page.
+  const updateModalEl = $<HTMLDivElement>("#update-modal");
+  const updateDotEl = document.getElementById("update-dot");
+  const updateMenuEl = fileMenuEl.querySelector<HTMLButtonElement>('[data-file="update"]');
+  const updateHintEl = document.getElementById("update-menu-hint");
+  let availableUpdate: UpdateInfo | null = null;
+  let shownUpdate: UpdateInfo | null = null;
+  let checkingUpdates = false;
+
+  const bareVersion = (value: string): string => value.replace(/^v/i, "");
+  const skippedVersion = (): string => readStore(SKIPPED_VERSION_KEY) ?? "";
+
+  /** The release a quiet check already found, remembered across restarts. */
+  function rememberedUpdate(): UpdateInfo | null {
+    const raw = readStore(UPDATE_AVAILABLE_KEY);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as Partial<UpdateInfo>;
+      const info: UpdateInfo = {
+        current: String(parsed.current ?? ""),
+        latest: String(parsed.latest ?? ""),
+        newer: parsed.newer === true,
+        title: String(parsed.title ?? ""),
+        url: String(parsed.url ?? ""),
+        notes: String(parsed.notes ?? ""),
+      };
+      // A build that has caught up must never keep advertising the old version.
+      if (!info.newer || !info.latest || !info.url.startsWith("https://")) return null;
+      if (appVersion && info.latest === bareVersion(appVersion)) return null;
+      return info;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Marker in the File menu: a dot, the version in the gutter, nothing more. */
+  function markUpdate(info: UpdateInfo | null): void {
+    availableUpdate = info;
+    const visible = !!info && info.latest !== skippedVersion();
+    if (updateDotEl) updateDotEl.hidden = !visible;
+    if (updateMenuEl) updateMenuEl.classList.toggle("has-update", visible);
+    if (updateMenuEl) {
+      updateMenuEl.title = visible && info
+        ? `SnagCraft v${info.latest} is available — open the release page`
+        : "Ask GitHub whether a newer version has been published";
+    }
+    if (updateHintEl) updateHintEl.textContent = visible && info ? `v${info.latest}` : "";
+  }
+
+  function openUpdateModal(info: UpdateInfo): void {
+    shownUpdate = info;
+    const set = (id: string, text: string): void => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = text;
+    };
+    set("update-latest", `v${info.latest}`);
+    set("update-current", `v${info.current}`);
+    set(
+      "update-desc",
+      `SnagCraft v${info.latest} has been published. Nothing was downloaded — grab it from the release page.`,
+    );
+    // The release title usually repeats the tag; keep only the description.
+    const headline = info.title.replace(/^\s*v?\d+(?:\.\d+)*\s*[—–-]?\s*/i, "").trim();
+    set("update-release-title", headline);
+    const titleEl = document.getElementById("update-release-title");
+    if (titleEl) titleEl.hidden = headline === "";
+    set("update-notes", info.notes);
+    const notesEl = document.getElementById("update-notes");
+    if (notesEl) notesEl.hidden = info.notes === "";
+    // A skipped version is still shown when the user asks for it.
+    if (!updateModalEl.hidden) return;
+    updateModalEl.hidden = false;
+    void updateModalEl.offsetWidth;
+    updateModalEl.classList.add("is-open");
+    updateModalEl.querySelector<HTMLElement>(".modal")?.focus({ preventScroll: true });
+  }
+
+  function closeUpdateModal(): void {
+    if (updateModalEl.hidden) return;
+    updateModalEl.classList.remove("is-open");
+    updateModalEl.hidden = true;
+    fileBtn.focus({ preventScroll: true });
+  }
+
+  /**
+   * Ask the backend for the newest release. `manual` means the user clicked it,
+   * so the answer belongs in a dialog and a failure is spoken out loud; the
+   * quiet daily check stays silent about both.
+   */
+  async function checkForUpdates(manual: boolean): Promise<string> {
+    if (checkingUpdates) return "An update check is already running.";
+    checkingUpdates = true;
+    // Recorded up front so a failed (offline) check still waits a day.
+    writeStore(LAST_UPDATE_CHECK_KEY, String(Date.now()));
+    if (manual) setStatus("Checking for updates…");
+    try {
+      const info = await invoke<UpdateInfo>("check_for_update");
+      if (info.newer) {
+        writeStore(UPDATE_AVAILABLE_KEY, JSON.stringify(info));
+        markUpdate(info);
+        if (manual) {
+          openUpdateModal(info);
+          setStatus(`SnagCraft v${info.latest} is available — open the release page from the dialog.`);
+        } else if (info.latest !== skippedVersion()) {
+          setStatus(`SnagCraft v${info.latest} is available — File → Check for updates…`);
+        }
+        return `SnagCraft v${info.latest} is available.`;
+      }
+      try {
+        localStorage.removeItem(UPDATE_AVAILABLE_KEY);
+      } catch {
+        /* storage unavailable — the marker just isn't remembered */
+      }
+      markUpdate(null);
+      if (manual) setStatus(`SnagCraft v${info.current} is the newest release.`, "success");
+      return `SnagCraft v${info.current} is the newest release.`;
+    } catch (e) {
+      if (manual) setStatus(`Could not check for updates: ${errText(e)}`, "error");
+      throw e;
+    } finally {
+      checkingUpdates = false;
+    }
+  }
+
+  /** One quiet check a day — Settings → General can switch it off. */
+  function maybeCheckForUpdates(): void {
+    markUpdate(rememberedUpdate());
+    if (!settings.checkUpdates) return;
+    const last = Number(readStore(LAST_UPDATE_CHECK_KEY) ?? 0);
+    if (Number.isFinite(last) && last > 0 && Date.now() - last < UPDATE_CHECK_INTERVAL_MS) return;
+    void checkForUpdates(false).catch(() => {
+      /* offline or rate-limited: say nothing and try again tomorrow */
+    });
+  }
+
+  $<HTMLButtonElement>("#update-open").addEventListener("click", () => {
+    const url = shownUpdate?.url ?? "";
+    closeUpdateModal();
+    if (!url) return;
+    void invoke("open_url", { url }).catch((e: unknown) =>
+      setStatus(`Could not open the release page: ${errText(e)}`, "error"),
+    );
+  });
+  $<HTMLButtonElement>("#update-later").addEventListener("click", () => {
+    closeUpdateModal();
+    setStatus("Still on the installed version — File → Check for updates… shows it again.");
+  });
+  $<HTMLButtonElement>("#update-skip").addEventListener("click", () => {
+    const latest = shownUpdate?.latest ?? "";
+    if (latest) writeStore(SKIPPED_VERSION_KEY, latest);
+    markUpdate(availableUpdate);
+    closeUpdateModal();
+    if (latest) {
+      setStatus(`Not mentioning v${latest} again — the manual check still offers it.`);
+    }
+  });
+  $<HTMLButtonElement>("#update-close").addEventListener("click", closeUpdateModal);
+  updateModalEl.addEventListener("pointerdown", (ev) => {
+    if (ev.target === updateModalEl) closeUpdateModal();
+  });
+  updateModalEl.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeUpdateModal();
     }
   });
 
@@ -6087,5 +6317,7 @@ export function mountApp(root: HTMLElement): void {
     applyWatermark();
     await ensureSaveDir();
     void refreshRecentFromFolder();
+    // Quiet, once a day at most: leaves a marker in the File menu, never a modal.
+    maybeCheckForUpdates();
   })();
 }

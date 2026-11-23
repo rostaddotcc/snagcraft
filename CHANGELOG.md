@@ -3,6 +3,17 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## Unreleased
+- **Check for updates.** File → **Check for updates…** asks GitHub for the newest
+  release and, when there is one, says which version it is with a link to its
+  release page. A quiet once-a-day check also runs at startup and only leaves a
+  small dot next to the menu entry (plus one line in the status bar) — it never
+  opens a dialog on its own, never downloads or installs anything, and it sends
+  no data about you. Settings → General → **Check for updates** turns the daily
+  check off (the manual one still works), and **Skip this version** stops the
+  marker for a release you don't want. Two buttons, described honestly in the
+  dialog: *Open the release page* and *Later*.
+
 ## v1.5.5
 - **SnagCraft can become the default screenshot tool on Linux Mint (Cinnamon) and
   GNOME.** Where no GlobalShortcuts portal exists, the desktop itself keeps the

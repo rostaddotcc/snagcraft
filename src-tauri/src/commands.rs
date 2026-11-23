@@ -13,6 +13,7 @@
 //! | `pick_save_dir`      | —                                    | chosen folder (`string`)                 |
 //! | `save_png_to_dir`    | `dataUrl`, `dir`, `filename`         | saved path (`string`)                    |
 //! | `save_image_as`      | `dataUrl`, `suggestedName`, `format`, `quality` | saved path (`string`)         |
+//! | `check_for_update`   | —                                    | newest release (`UpdateInfo`)            |
 //!
 //! `save_image` (PNG/JPEG/WebP + quality) lives in `export.rs`; the close-guard
 //! commands (`force_close`, `set_dirty`, `is_dirty`, `set_minimize_to_tray`,

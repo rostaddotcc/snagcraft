@@ -106,6 +106,10 @@ share* flow in one lightweight app. SnagCraft fills that gap.
   the `Print` / `Shift+Print` keys to SnagCraft through the desktop's own keyboard
   settings — with a one-click restore of the previous bindings
 - Light / dark themes, and a "save before closing?" guard
+- **Check for updates** — File → Check for updates… asks GitHub for the newest
+  release and links to it; a quiet once-a-day check leaves a small dot in the
+  File menu (Settings → General can switch it off). Nothing is downloaded or
+  installed behind your back
 
 ## Shortcuts
 

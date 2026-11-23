@@ -57,6 +57,11 @@ export const WATERMARK_CORNER_KEY = "snagcraft:watermark-corner";
 export const UPLOAD_ENDPOINT_KEY = "snagcraft:upload-endpoint";
 export const SPLIT_FOLDERS_KEY = "snagcraft:split-folders";
 export const REC_DIR_KEY = "snagcraft:rec-dir";
+export const UPDATES_KEY = "snagcraft:check-updates";
+/** When the app last asked GitHub for a newer release (ms since epoch). */
+export const LAST_UPDATE_CHECK_KEY = "snagcraft:last-update-check";
+/** A version the user told us to stop mentioning. */
+export const SKIPPED_VERSION_KEY = "snagcraft:skipped-version";
 
 export const DEFAULT_FORMAT: ExportFormat = "png";
 export const DEFAULT_REC_FORMAT: RecFormat = "mp4";
@@ -71,6 +76,8 @@ export const DEFAULT_INTERVAL = 30;
 export const DEFAULT_MIC = "";
 /** Whether the desktop's own sound is mixed into a take. */
 export const DEFAULT_SYSTEM_AUDIO = false;
+/** Minimum time between automatic checks — one request a day. */
+export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 /** Text burned into exports; empty means no watermark. */
 export const DEFAULT_WATERMARK_TEXT = "";
 /** Watermark visibility, in percent. */
@@ -161,6 +168,8 @@ export interface ExportSettings {
   splitFolders: boolean;
   /** Recording folder when split; empty follows the save folder. */
   recDir: string;
+  /** Ask GitHub once a day whether a newer release exists. */
+  checkUpdates: boolean;
 }
 
 /**
@@ -269,6 +278,9 @@ export function readExportSettings(): ExportSettings {
     uploadEndpoint: (store(UPLOAD_ENDPOINT_KEY) ?? "").trim(),
     splitFolders: store(SPLIT_FOLDERS_KEY) === "true",
     recDir: (store(REC_DIR_KEY) ?? DEFAULT_REC_DIR).trim(),
+    // On unless explicitly turned off — the check is one request a day and the
+    // answer is only ever a quiet notice.
+    checkUpdates: store(UPDATES_KEY) !== "false",
   };
 }
 
@@ -295,6 +307,7 @@ export function saveExportSettings(settings: ExportSettings): void {
     localStorage.setItem(UPLOAD_ENDPOINT_KEY, settings.uploadEndpoint);
     localStorage.setItem(SPLIT_FOLDERS_KEY, String(settings.splitFolders));
     localStorage.setItem(REC_DIR_KEY, settings.recDir);
+    localStorage.setItem(UPDATES_KEY, String(settings.checkUpdates));
   } catch {
     /* storage unavailable — the preferences just aren't remembered */
   }
@@ -384,6 +397,8 @@ export interface SettingsOptions {
   setDefaultTool?(): Promise<DefaultToolStatus>;
   /** Put the desktop's previous screenshot bindings back; returns state. */
   restoreDefaultTool?(): Promise<DefaultToolStatus>;
+  /** Ask GitHub for the newest release; resolves to a one-line summary. */
+  checkForUpdates?(): Promise<string>;
 }
 
 /** One microphone the recorder can capture. */
@@ -461,6 +476,10 @@ export class SettingsPanel {
   private traySwitch!: HTMLButtonElement;
   private widgetSwitch!: HTMLButtonElement;
   private autosaveSwitch!: HTMLButtonElement;
+  private updatesSwitch!: HTMLButtonElement;
+  private updateActions!: HTMLElement;
+  private checkUpdatesBtn!: HTMLButtonElement;
+  private updateNote!: HTMLElement;
   private autostartRow!: HTMLElement;
   private autostartSwitch!: HTMLButtonElement;
   private autostartBusy = false;
@@ -649,6 +668,12 @@ export class SettingsPanel {
       ? "Fresh captures are saved automatically"
       : "Fresh captures stay in the editor until you save them";
 
+    this.updatesSwitch.classList.toggle("is-on", settings.checkUpdates);
+    this.updatesSwitch.setAttribute("aria-checked", String(settings.checkUpdates));
+    this.updatesSwitch.title = settings.checkUpdates
+      ? "SnagCraft asks GitHub once a day for a newer release"
+      : "Automatic update checks are off — File → Check for updates… still works";
+
     this.hotkeySwitch.classList.toggle("is-on", settings.hotkeysEnabled);
     this.hotkeySwitch.setAttribute("aria-checked", String(settings.hotkeysEnabled));
     this.hotkeySwitch.title = settings.hotkeysEnabled ? "Global hotkeys are on" : "Global hotkeys are off";
@@ -802,6 +827,20 @@ export class SettingsPanel {
     this.namePreview.classList.toggle("is-fallback", this.nameInput.value.trim() === "");
   }
 
+  /** Ask GitHub now (File → Check for updates… does the same); inline feedback. */
+  private async checkNow(): Promise<void> {
+    if (!this.opts.checkForUpdates) return;
+    this.checkUpdatesBtn.disabled = true;
+    this.updateNote.textContent = "Checking…";
+    try {
+      this.updateNote.textContent = await this.opts.checkForUpdates();
+    } catch (e) {
+      this.updateNote.textContent = `Could not check: ${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      this.checkUpdatesBtn.disabled = false;
+    }
+  }
+
   /** Copy the recording diagnostics via the shell, with inline feedback. */
   private async copyDiagnostics(): Promise<void> {
     if (!this.opts.copyDiagnostics) {
@@ -865,6 +904,17 @@ export class SettingsPanel {
                 <span class="setting-sub">Write every fresh capture to the save folder. Off keeps it in the editor until you press Save or Save As.</span>
               </div>
               <button type="button" class="switch" id="settings-autosave" role="switch" aria-checked="true" aria-labelledby="autosave-label"><span class="switch-knob" aria-hidden="true"></span></button>
+            </div>
+            <div class="setting-row">
+              <div class="setting-row-text">
+                <span class="setting-label" id="updates-label">Check for updates</span>
+                <span class="setting-sub">Ask GitHub once a day whether a newer SnagCraft is out. Nothing is downloaded, and no data about you is sent.</span>
+              </div>
+              <button type="button" class="switch" id="settings-updates" role="switch" aria-checked="true" aria-labelledby="updates-label"><span class="switch-knob" aria-hidden="true"></span></button>
+            </div>
+            <div class="dir-actions" id="settings-update-actions" hidden>
+              <button type="button" class="btn-secondary" id="settings-check-updates">Check for updates now</button>
+              <span class="token-hint" id="settings-update-note" role="status" aria-live="polite"></span>
             </div>
           </section>
 
@@ -1110,6 +1160,12 @@ export class SettingsPanel {
     this.traySwitch = root.querySelector<HTMLButtonElement>("#settings-tray")!;
     this.widgetSwitch = root.querySelector<HTMLButtonElement>("#settings-widget")!;
     this.autosaveSwitch = root.querySelector<HTMLButtonElement>("#settings-autosave")!;
+    this.updatesSwitch = root.querySelector<HTMLButtonElement>("#settings-updates")!;
+    this.updateActions = root.querySelector<HTMLElement>("#settings-update-actions")!;
+    this.checkUpdatesBtn = root.querySelector<HTMLButtonElement>("#settings-check-updates")!;
+    this.updateNote = root.querySelector<HTMLElement>("#settings-update-note")!;
+    // "Check now" needs the shell's IPC bridge; a plain-browser build has none.
+    this.updateActions.hidden = !this.opts.checkForUpdates;
     this.autostartRow = root.querySelector<HTMLElement>("#settings-autostart-row")!;
     this.autostartSwitch = root.querySelector<HTMLButtonElement>("#settings-autostart")!;
     // Launch-at-login needs the shell's OS bridge; without it (plain-browser
@@ -1164,6 +1220,14 @@ export class SettingsPanel {
       this.opts.updateSettings({ autoSave: next });
       this.refresh();
     });
+
+    this.updatesSwitch.addEventListener("click", () => {
+      const next = !this.opts.getSettings().checkUpdates;
+      this.opts.updateSettings({ checkUpdates: next });
+      this.refresh();
+    });
+
+    this.checkUpdatesBtn.addEventListener("click", () => void this.checkNow());
 
     this.hotkeySwitch.addEventListener("click", () => {
       const next = !this.opts.getSettings().hotkeysEnabled;
